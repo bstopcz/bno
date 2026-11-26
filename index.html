@@ -203,8 +203,8 @@
 </main>
 
 <main id="tab-live">
-  <label class="pick">Wczytaj własną mapę (JPG / PNG / PDF)
-    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd">
+  <label class="pick">Wczytaj własną mapę (PDF / JPG / PNG, najlepiej razem z plikiem OCAD)
+    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd" multiple>
   </label>
   <div id="ltitle"></div>
   <div id="lstatus" class="status"></div>
@@ -259,7 +259,9 @@
     <ol>
       <li>Wczytaj mapę: obraz JPG/PNG albo PDF (z PDF-a brana jest pierwsza strona i zamieniana na ostry obraz).
           Im lepsza jakość (eksport z OCAD), tym lepiej.</li>
-      <li>Dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
+      <li><b>Najdokładniej:</b> zaznacz naraz plik OCAD i PDF tej samej mapy. Apka pokaże PDF, a teren, skalę i położenie
+          weźmie z pliku OCAD: nie trzeba wtedy kalibrować ani wybierać rodzaju mapy.</li>
+      <li>Bez pliku OCAD: dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
           i albo stań tam z włączonym GPS, albo wklej współrzędne skopiowane z Map Google
           (przytrzymaj palec na tym miejscu i skopiuj liczby).</li>
       <li>Włącz GPS. Niebieska kropka to Ty, strzałka pokazuje, dokąd skierowany jest telefon, czerwona linia to ślad.</li>
@@ -462,6 +464,7 @@
 </script>
 <script src="geo.js"></script>
 <script src="mapfile.js"></script>
+<script src="align.js"></script>
 <script src="lines.js"></script>
 <script src="core.js"></script>
 <script src="ocad.js"></script>

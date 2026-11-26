@@ -155,14 +155,21 @@
       if (p && (p.x < 0 || p.y < 0 || p.x > W || p.y > H)) c += '. Jesteś poza mapą.';
     }
     if (fix && fix.acc > 100) c += ' Pozycja jest bardzo niedokładna – to wygląda na komputer bez GPS. Otwórz stronę na telefonie (instrukcja na dole).';
-    say(gps + ' · ' + c);
+    say(gps + ' · ' + c + (ocadCtx && ocadCtx.note ? ' ' + ocadCtx.note : ''));
   }
 
   // ---------- mapa ----------
   $('lfile').addEventListener('change', (e) => {
-    const file = e.target.files[0];
+    const files = [...e.target.files];
+    const ocd = files.find((f) => /\.ocd$/i.test(f.name)), other = files.find((f) => !/\.ocd$/i.test(f.name));
+    if (ocd && other) { openPair(ocd, other); return; } // plik OCAD + PDF tej samej mapy
+    const file = files[0];
     if (!file) return;
     if (/\.ocd$/i.test(file.name)) {
+      say('Do pliku OCAD dołącz PDF tej samej mapy: w oknie wyboru zaznacz oba pliki naraz (z klawiszem Ctrl). Sam plik OCAD obejrzysz w zakładce „Warianty”.');
+      return;
+    }
+    if (false) {
       say('Plików OCAD jeszcze nie czytam. W OCAD wybierz Plik → Eksport → JPEG lub PNG (300 dpi) i wczytaj ten obraz.');
       return;
     }
@@ -173,7 +180,68 @@
     }).catch((err) => say(err.message));
   });
 
-  // Wczytuje obraz mapy. opts: { key, name, title?, preset? (gotowa kalibracja treningu), mode?, contour? }
+  // ---------- para: plik OCAD + PDF tej samej mapy ----------
+  // Wyświetlamy PDF, a teren, skalę i położenie na świecie bierzemy z OCAD-a. PDF jest dopasowywany automatycznie.
+  let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
+  async function openPair(ocdFile, imgFile) {
+    try {
+      say('Czytam plik OCAD…');
+      const map = BnoOcad.parse(await ocdFile.arrayBuffer());
+      say('Zamieniam PDF na obraz…');
+      const f = await BnoFile.open(imgFile);
+      loadMap(f.url, { key: 'bno-pair:' + imgFile.name + ':' + imgFile.size, name: f.name, image: f.pdf ? f.url : null, ocad: { map, dpi: f.dpi } });
+    } catch (err) { say(err.message); }
+  }
+
+  const T = BnoCore.T;
+  const CAT = new Uint8Array(64); // klasa terenu -> kategoria do porównywania obrazu z mapą
+  for (const [cat, list] of [[1, [T.BUILDING]], [2, [T.FORBIDDEN]], [3, [T.LAKE, T.WATER]], [4, [T.PAVED]], [5, [T.OPEN, T.ROUGH, T.CULT]],
+    [6, [T.GREEN1, T.GREEN2, T.GREEN3, T.IMPVEG, T.UNDER1, T.UNDER2]]]) for (const c of list) CAT[c] = cat;
+  const cats = (cls) => { const out = new Uint8Array(cls.length); for (let i = 0; i < cls.length; i++) out[i] = CAT[cls[i]]; return out; };
+  const symOverrides = (setId) => { try { return JSON.parse(localStorage.getItem('bno-sym:' + setId)) || {}; } catch (err) { return {}; } };
+
+  function attachOcad(o) {
+    const { map } = o, sprint = map.geo.scale > 0 && map.geo.scale <= 5000;
+    const setId = BnoSymbols.detectSet(map);
+    // 1. kategorie terenu z obrazu (zwykła analiza kolorów, w małej rozdzielczości)
+    const ak = Math.min(1, 1600 / Math.max(W, H)), aw = Math.round(W * ak), ah = Math.round(H * ak);
+    const c = document.createElement('canvas'); c.width = aw; c.height = ah;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(img, 0, 0, aw, ah);
+    const seen = analyze(g.getImageData(0, 0, aw, ah).data, aw, ah, sprint ? 'sprint' : 'forest');
+    const dpi = o.dpi || 300; // obraz bez zapisanej rozdzielczości: zakładamy 300 dpi, skalę wydruku i tak sprawdzamy
+    const P = { cat: cats(seen.cls), w: aw, h: ah, mm: 25.4 / dpi / ak };
+    // 2. zgrubne położenie obrazu na całej mapie OCAD
+    const over = BnoSymbols.build(map, 2400, symOverrides(setId), setId);
+    const a1 = BnoAlign.align(P, { cat: cats(over.cls), w: over.w, h: over.h, mm: 1 / over.k });
+    if (!a1) throw new Error('Obraz jest większy niż mapa w pliku OCAD – to chyba nie ta sama mapa.');
+    const mmImg = 25.4 / dpi * a1.scale; // ile mm mapy OCAD ma jeden piksel obrazu
+    let left = over.bounds.x0 + a1.x, top = over.bounds.y1 - a1.y;
+    // 3. dokładne położenie: mapa OCAD policzona gęsto tylko wokół obrazu
+    const m = 4; // mm zapasu
+    const fine = BnoSymbols.build(map, PROC_DIM, symOverrides(setId), setId, { x0: left - m, x1: left + W * mmImg + m, y0: top - H * mmImg - m, y1: top + m });
+    const a2 = BnoAlign.align(P, { cat: cats(fine.cls), w: fine.w, h: fine.h, mm: 1 / fine.k }, [a1.scale]);
+    if (a2 && a2.score >= a1.score - 0.05) { left = fine.bounds.x0 + a2.x; top = fine.bounds.y1 - a2.y; }
+    const score = a2 ? Math.max(a1.score, a2.score) : a1.score;
+    ocadCtx = { map, setId, region: { x0: left, x1: left + W * mmImg, y0: top - H * mmImg, y1: top } };
+    proc = null;
+    ensureProc();
+    // 4. położenie na świecie z georeferencji pliku
+    const crs = BnoAlign.detectCrs(map.geo);
+    let note = `Mapa z pliku OCAD (${BnoSymbols.SETS[setId].name}, 1:${Math.round(map.geo.scale)}), PDF dopasowany: zgodność ${Math.round(Math.max(0, score) * 100)}%`;
+    if (Math.abs(a1.scale - 1) > 0.01) note += `, wydruk w skali 1:${Math.round(map.geo.scale / a1.scale)}`;
+    if (score < 0.35) note += '. UWAGA: słabe dopasowanie – sprawdź, czy PDF pochodzi z tego pliku';
+    if (crs) {
+      pairs = [[0, 0], [W, 0], [0, H], [W, H]].map(([px, py]) => Object.assign(BnoAlign.ocadToLatLon(map.geo, crs, left + px * mmImg, top - py * mmImg), { px, py }));
+      cal = fit(pairs); locked = true;
+      $('lcaladd').hidden = true; $('lcalclear').hidden = true;
+      note += `. Kalibracja automatyczna z georeferencji (${crs.name})`;
+      if (Math.abs(map.geo.angle) > 0.01) note += `; mapa obrócona o ${map.geo.angle.toFixed(1)}° – ten przypadek nie był sprawdzony w terenie`;
+    } else note += '. Plik nie ma georeferencji w znanym układzie – skalibruj mapę ręcznie dwoma punktami';
+    ocadCtx.note = note + '.';
+    refresh();
+  }
+
+  // Wczytuje obraz mapy. opts: { key, name, title?, preset? (gotowa kalibracja treningu), mode?, contour?, ocad? }
   function loadMap(src, opts) {
     img.onload = () => {
       W = img.naturalWidth; H = img.naturalHeight;
@@ -182,6 +250,7 @@
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
       mapImage = opts.image || null;
+      ocadCtx = null;
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -193,6 +262,10 @@
       $('ltitle').textContent = opts.title || '';
       setTapMode(null);
       fitView(); describe(); guide();
+      if (opts.ocad) {
+        say('Dopasowuję PDF do mapy z pliku OCAD… (to może potrwać kilkanaście sekund)');
+        setTimeout(() => { try { attachOcad(opts.ocad); } catch (err) { say('Nie udało się połączyć PDF-a z plikiem OCAD: ' + err.message); } }, 80);
+      }
     };
     img.onerror = () => say(opts.preset ? 'Nie udało się pobrać mapy treningu. Sprawdź połączenie z internetem.' : 'Nie udało się wczytać tego pliku jako obrazu.');
     img.src = src;
@@ -373,6 +446,11 @@
   // ---------- trasa do celu ----------
   function ensureProc() {
     if (proc) return;
+    if (ocadCtx) { // teren prosto z symboli OCAD-a, na siatce pokrywającej dokładnie wyświetlany obraz
+      const grid = BnoSymbols.build(ocadCtx.map, PROC_DIM, symOverrides(ocadCtx.setId), ocadCtx.setId, ocadCtx.region);
+      proc = { k: grid.w / W, w: grid.w, h: grid.h, cost: costGrid(grid.cls), contour: grid.contour };
+      return;
+    }
     const k = Math.min(1, PROC_DIM / Math.max(W, H));
     const w = Math.round(W * k), h = Math.round(H * k);
     const c = document.createElement('canvas');

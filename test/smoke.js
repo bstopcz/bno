@@ -262,6 +262,54 @@ if (typeof document !== 'undefined') {
   print('OK tabele symboli:', expect.length + 4, 'sprawdzonych wpisów');
 }
 
+// --- georeferencja OCAD -> GPS i dopasowanie obrazu do mapy ---
+{
+  const AL = typeof require !== 'undefined' ? require('../align.js') : BnoAlign;
+  // UTM 33N: Brama Brandenburska w Berlinie (ok. 389 880 E, 5 819 790 N)
+  const utm33 = { lon0: 15, k0: 0.9996, fe: 5e5, fn: 0 };
+  const bb = AL.tmForward(52.516275, 13.377704, utm33);
+  assert.ok(Math.abs(bb.e - 389880) < 150 && Math.abs(bb.n - 5819790) < 150, 'UTM w przód: ' + Math.round(bb.e) + ', ' + Math.round(bb.n));
+  // tam i z powrotem w trzech polskich układach (dokładność poniżej centymetra)
+  for (const [crs, lat, lon] of [[{ lon0: 19, k0: 0.9993, fe: 5e5, fn: -5300000 }, 52.2851, 20.9412], [{ lon0: 21, k0: 0.999923, fe: 7.5e6, fn: 0 }, 50.06, 19.94], [{ lon0: 21, k0: 0.9996, fe: 5e5, fn: 0 }, 54.35, 18.65]]) {
+    const f = AL.tmForward(lat, lon, crs), b = AL.tmInverse(f.e, f.n, crs);
+    assert.ok(Math.abs(b.lat - lat) < 1e-7 && Math.abs(b.lon - lon) < 1e-7, 'tam i z powrotem');
+  }
+  // plik z Bielan: PUWG 1992, początek układu mapy w (632000, 493000) -> okolice 52,28 N 20,95 E
+  const geoB = { x: 632000, y: 493000, angle: 0, scale: 4000, realWorld: true, grid: 48001 };
+  const crsB = AL.detectCrs(geoB);
+  assert.strictEqual(crsB.name, 'PUWG 1992');
+  const o = AL.ocadToLatLon(geoB, crsB, 0, 0), e100 = AL.ocadToLatLon(geoB, crsB, 250, 0), n100 = AL.ocadToLatLon(geoB, crsB, 0, 250);
+  assert.ok(Math.abs(o.lat - 52.28) < 0.03 && Math.abs(o.lon - 20.94) < 0.03, 'Bielany: ' + o.lat.toFixed(4) + ', ' + o.lon.toFixed(4));
+  const geo2 = typeof require !== 'undefined' ? require('../geo.js') : BnoGeo;
+  // tolerancja 5 m: odwzorowanie ma tu skalę ok. 0,9995, a prosta kula w geo.js myli się o ułamek procenta
+  assert.ok(Math.abs(geo2.distance(o, e100) - 1000) < 5 && Math.abs(geo2.distance(o, n100) - 1000) < 5, '250 mm w skali 1:4000 to 1 km');
+  assert.ok(e100.lon > o.lon && n100.lat > o.lat);
+  assert.strictEqual(AL.detectCrs({ x: 7500000, y: 5790000, realWorld: true }).name, 'PUWG 2000, strefa 7');
+  assert.strictEqual(AL.detectCrs({ x: 0, y: 0, realWorld: false }), null);
+
+  // dopasowanie: "mapa OCAD" 400x300 pól po 1 mm z losowymi prostokątami kategorii; "PDF" to jej wycinek w innej rozdzielczości
+  const OW = 400, OH = 300, oc = new Uint8Array(OW * OH);
+  let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  for (let k = 0; k < 140; k++) {
+    const x0 = (rnd() * 380) | 0, y0 = (rnd() * 280) | 0, w0 = 4 + ((rnd() * 22) | 0), h0 = 4 + ((rnd() * 22) | 0), c = 1 + ((rnd() * 6) | 0);
+    for (let y = y0; y < Math.min(OH, y0 + h0); y++) for (let x = x0; x < Math.min(OW, x0 + w0); x++) oc[y * OW + x] = c;
+  }
+  const cut = (ox, oy, wmm, hmm, mmPerPx, printScale) => { // wycinek mapy narysowany na kartce w skali printScale
+    const pw = Math.round(wmm / mmPerPx), ph = Math.round(hmm / mmPerPx), cat = new Uint8Array(pw * ph);
+    for (let y = 0; y < ph; y++) for (let x = 0; x < pw; x++) {
+      const mx = Math.floor(ox + (x + 0.5) * mmPerPx * printScale), my = Math.floor(oy + (y + 0.5) * mmPerPx * printScale);
+      cat[y * pw + x] = mx >= 0 && my >= 0 && mx < OW && my < OH ? oc[my * OW + mx] : 0;
+    }
+    return { cat, w: pw, h: ph, mm: mmPerPx };
+  };
+  const O = { cat: oc, w: OW, h: OH, mm: 1 };
+  const r1 = AL.align(cut(137, 62, 150, 110, 0.4, 1), O);
+  assert.ok(r1.scale === 1 && Math.abs(r1.x - 137) <= 1 && Math.abs(r1.y - 62) <= 1 && r1.score > 0.8, 'dopasowanie 1:1: ' + JSON.stringify(r1));
+  const r2 = AL.align(cut(40, 90, 120, 100, 0.3, 1.25), O);
+  assert.ok(r2.scale === 1.25 && Math.abs(r2.x - 40) <= 1.5 && Math.abs(r2.y - 90) <= 1.5, 'dopasowanie w innej skali wydruku: ' + JSON.stringify(r2));
+  print('OK georeferencja OCAD i dopasowanie obrazu; Bielany:', o.lat.toFixed(4) + ', ' + o.lon.toFixed(4));
+}
+
 // --- okno wyszukiwania: krótki przebieg na dużej siatce nie przeszukuje całej mapy, a wynik jest ten sam ---
 {
   const GW = 3200, GH = 2400, g = new Float32Array(GW * GH).fill(1.6);
