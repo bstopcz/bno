@@ -22,9 +22,10 @@
     cult: K(T.CULT, 'area'), paved: K(T.PAVED, 'area'), barerock: K(T.OPEN, 'area'),
     under1: K(T.UNDER1, 'overlay'), under2: K(T.UNDER2, 'overlay'), marsh: K(T.MARSH, 'overlay'),
     softmarsh: K(T.UNDER1, 'overlay'), stony: K(T.STONY, 'overlay'), boulders: K(T.BOULDERS, 'overlay'),
-    sand: K(T.UNDER1, 'overlay'),
+    sand: K(T.UNDER1, 'overlay'), stonyfight: K(T.GREEN3, 'overlay'),
     lake: K(T.LAKE, 'hard'), shallow: K(T.WATER, 'hard'), impveg: K(T.IMPVEG, 'hard'),
     forbidden: K(T.FORBIDDEN, 'hard'), building: K(T.BUILDING, 'hard'), canopy: K(T.PAVED, 'hard'),
+    rockarea: K(T.CLIFF, 'hard'), obstarea: K(T.OBST, 'hard'),
     stream: K(T.STREAM, 'slowline', 2), ditch: K(T.DITCH, 'slowline', 1.5), bank: K(T.OBST, 'slowline', 2),
     lowobst: K(T.DITCH, 'slowline', 1.5), fence: K(T.FENCE, 'slowline', 1.5), marshline: K(T.MARSH, 'slowline', 3),
     road: K(T.PATH, 'path', 4), track: K(T.PATH, 'path', 3), footpath: K(T.PATH2, 'path', 2),
@@ -37,51 +38,61 @@
   const ORDER = ['area', 'overlay', 'hard', 'slowline', 'path', 'wall', 'gap', 'oob'];
 
   // ---- tabele symboli: numer główny -> rodzaj (opcjonalnie osobno dla linii / powierzchni) ----
-  // Aktualne specyfikacje: ISOM 2017-2 (las) i ISSprOM 2019-2 (sprint) mają wspólną numerację.
-  const MODERN = {
+  // Źródła: wiki IOF ze specyfikacjami ISOM 2017-2 i ISSprOM 2019-2 (rewizja 6, 2024), Przepisy IOF 17.2
+  // oraz zestawy symboli OpenOrienteering dla ISOM 2000 i ISSOM 2007 (z tabelami przenumerowania).
+  // 'pavedline': droga utwardzona narysowana linią (gruba) albo tylko krawędź/stopień nawierzchni (cienka).
+  const PAVED = { area: 'paved', line: 'pavedline' };
+  const WATERX = { area: 'lake', line: 'riverline' };
+
+  // ISOM 2017-2 (las)
+  const ISOM2017 = {
     101: 'contour', 102: 'contour', 103: 'ignore', 104: 'bank', 105: 'lowobst', 106: 'ignore', 107: 'bank', 108: 'lowobst',
-    113: 'stony', 114: 'boulders',
-    201: 'cliff', 202: 'bank', 208: 'boulders', 209: 'boulders', 210: 'stony', 211: 'stony', 212: 'boulders', 213: 'sand', 214: 'barerock', 215: 'bank',
-    301: { area: 'lake', line: 'riverline' }, 302: 'shallow', 304: 'stream', 305: 'ditch', 306: 'ignore', 307: { area: 'lake', line: 'riverline' },
-    308: 'marsh', 309: 'marshline', 310: 'softmarsh',
-    401: 'open', 402: 'rough', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2',
-    410: 'fight', 411: 'impveg', 412: 'cult', 413: 'cult', 414: 'cult',
-    501: 'paved', 502: 'road', 503: 'road', 504: 'track', 505: 'footpath', 506: 'smallpath', 507: 'faintpath', 508: 'ride',
+    113: 'ignore', 114: 'stony',
+    201: 'cliff', 202: 'bank', 206: 'rockarea', 208: 'ignore', 209: 'stony', 210: 'under1', 211: 'boulders', 212: 'stonyfight',
+    213: 'sand', 214: 'barerock', 215: 'bank',
+    301: WATERX, 302: 'shallow', 304: 'stream', 305: 'ditch', 306: 'ignore', 307: WATERX, 308: 'marsh', 309: 'marshline', 310: 'softmarsh',
+    401: 'open', 402: 'open', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
+    411: 'impveg', 412: 'cult', 413: 'cult', 414: 'cult',
+    501: PAVED, 502: 'road', 503: 'road', 504: 'track', 505: 'footpath', 506: 'smallpath', 507: 'faintpath', 508: 'ride',
     512: 'bridge', 513: 'fence', 514: 'lowobst', 515: 'wall', 516: 'fence', 517: 'lowobst', 518: 'wall', 519: 'crossing',
-    520: 'forbidden', 521: 'building', 522: 'canopy', 529: 'wall', 532: 'paved',
-    708: 'oobline', 709: 'oob', 710: 'crossing',
+    520: 'forbidden', 521: 'building', 522: 'canopy', 529: 'wall', 532: { line: 'footpath', area: 'paved' },
+    708: 'oobline', 709: 'oob', 710: 'crossing', 714: 'oob',
   };
-  // Dawna numeracja leśna (ISOM 2000).
+  // ISSprOM 2019-2 (sprint): ta sama numeracja, inne znaczenie kilku symboli
+  const ISSPROM2019 = Object.assign({}, ISOM2017, {
+    208: 'stony', 210: 'stony', 533: 'under1',
+  });
+  // ISOM 2000 (las, dawna numeracja)
   const ISOM2000 = {
-    101: 'contour', 102: 'contour', 103: 'ignore', 106: 'bank', 107: 'lowobst', 108: 'lowobst', 109: 'bank', 110: 'lowobst', 113: 'stony',
-    201: 'cliff', 203: 'bank', 208: 'boulders', 210: 'stony', 211: 'sand', 212: 'barerock',
-    301: { area: 'lake', line: 'riverline' }, 302: 'lake', 304: { area: 'lake', line: 'riverline' }, 305: 'stream', 306: 'ditch', 307: 'ignore',
-    308: 'marshline', 309: { area: 'lake', line: 'riverline' }, 310: 'marsh', 311: 'softmarsh',
-    401: 'open', 402: 'rough', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
+    101: 'contour', 102: 'contour', 103: 'ignore', 106: 'bank', 107: 'lowobst', 108: 'lowobst', 109: 'bank', 110: 'lowobst',
+    201: 'cliff', 202: 'rockarea', 203: 'bank', 208: 'stony', 210: 'stony', 211: 'sand', 212: 'barerock',
+    301: WATERX, 302: 'lake', 304: WATERX, 305: 'stream', 306: 'ditch', 307: 'ignore', 308: 'marshline', 309: WATERX, 310: 'marsh', 311: 'softmarsh',
+    401: 'open', 402: 'open', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
     411: 'slow', 412: 'cult', 413: 'cult', 415: 'cult',
     501: 'road', 502: 'road', 503: 'road', 504: 'road', 505: 'track', 506: 'footpath', 507: 'smallpath', 508: 'faintpath', 509: 'ride',
-    512: 'bridge', 513: 'bridge', 514: 'crossing', 518: 'bridge', 519: 'fence', 520: 'lowobst', 521: 'wall', 522: 'fence', 523: 'lowobst', 524: 'wall',
-    525: 'crossing', 526: 'building', 527: 'forbidden', 528: 'forbidden', 529: 'paved',
-    707: 'oobline', 708: 'crossing', 709: 'oob',
+    512: 'crossing', 518: 'bridge', 519: 'fence', 520: 'lowobst', 521: 'wall', 522: 'fence', 523: 'lowobst', 524: 'wall', 525: 'crossing',
+    526: 'building', 527: 'forbidden', 528: 'forbidden', 529: PAVED, 534: 'wall',
+    707: 'oobline', 708: 'crossing', 709: 'oob', 710: 'oob',
   };
-  // Dawna numeracja sprinterska (ISSOM 2007).
+  // ISSOM 2007 (sprint, dawna numeracja)
   const ISSOM2007 = {
-    101: 'contour', 102: 'contour', 103: 'ignore', 106: 'bank', 107: 'lowobst', 109: 'bank', 110: 'lowobst', 113: 'stony',
-    201: 'cliff', 203: 'bank', 208: 'boulders', 210: 'stony', 211: 'sand', 212: 'barerock', 214: 'barerock',
-    304: { area: 'lake', line: 'riverline' }, 305: 'shallow', 306: 'ditch', 307: 'ignore', 309: { area: 'lake', line: 'riverline' }, 310: 'marsh', 311: 'softmarsh',
-    401: 'open', 402: 'rough', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
-    412: 'cult', 413: 'cult', 415: 'cult', 421: 'impveg',
-    506: 'footpath', 507: 'smallpath', 508: 'faintpath', 509: 'ride', 512: 'bridge', 518: 'bridge', 519: 'fence', 521: 'wall', 522: 'fence', 524: 'wall',
-    525: 'crossing', 526: { area: 'building', line: 'wall' }, 527: 'forbidden', 528: 'forbidden', 529: 'paved',
-    707: 'oobline', 708: 'crossing', 709: 'oob',
+    101: 'contour', 102: 'contour', 103: 'ignore', 106: 'bank', 108: 'lowobst', 109: 'bank', 110: 'lowobst',
+    201: 'cliff', 202: 'rockarea', 203: 'bank', 208: 'stony', 210: 'stony', 211: 'sand', 212: 'barerock',
+    304: WATERX, 305: 'shallow', 306: 'ditch', 307: 'ignore', 308: 'marshline', 309: WATERX, 310: 'marsh', 311: 'softmarsh',
+    401: 'open', 402: 'open', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
+    411: 'slow', 412: 'cult', 413: 'cult', 415: 'cult', 421: 'impveg',
+    506: 'footpath', 507: 'smallpath', 508: 'faintpath', 509: 'ride', 512: 'bridge', 518: 'bridge',
+    519: { line: 'fence', area: 'obstarea' }, 521: { line: 'wall', area: 'building' }, 522: 'fence', 524: 'wall', 525: 'crossing',
+    526: { area: 'building', line: 'wall' }, 527: 'forbidden', 528: 'forbidden', 529: PAVED, 534: 'wall',
+    707: 'oobline', 708: 'crossing', 709: 'oob', 714: 'oob',
   };
-  // Wyjątki po pełnym numerze (numer * 1000 + podnumer), wspólne dla aktualnych zestawów.
-  const MODERN_SUB = { 526200: 'canopy' };
-  const ISSOM_SUB = { 526200: 'canopy', 526002: 'canopy' };
+  // Wyjątki po pełnym numerze (numer * 1000 + podnumer).
+  const SPRINT_SUB = { 512100: 'ignore', 512200: 'bridge', 512300: 'paved' }; // 512.1: krawędź mostu, pod którym wolno tylko przejść
+  const ISSOM_SUB = { 526200: 'canopy' };
 
   const SETS = {
-    isom2017: { name: 'ISOM 2017 (las)', table: MODERN, sub: MODERN_SUB },
-    issprom2019: { name: 'ISSprOM 2019 (sprint)', table: MODERN, sub: MODERN_SUB },
+    isom2017: { name: 'ISOM 2017 (las)', table: ISOM2017, sub: {} },
+    issprom2019: { name: 'ISSprOM 2019 (sprint)', table: ISSPROM2019, sub: SPRINT_SUB },
     isom2000: { name: 'ISOM 2000 (las, dawna numeracja)', table: ISOM2000, sub: {} },
     issom2007: { name: 'ISSOM 2007 (sprint, dawna numeracja)', table: ISSOM2007, sub: ISSOM_SUB },
   };
@@ -95,6 +106,8 @@
     if (type(521) === 3) modern += 2; else if (type(521) === 2) modern -= 1;
     if (type(529) === 3) modern -= 2; else if (type(529) === 2) modern += 1;
     if (type(526) === 3) modern -= 2;
+    if (type(519) === 2) modern -= 2; else if (type(519) === 1) modern += 1; // 519: dawniej mur (linia), teraz punkt przejścia
+    if (type(106) === 2 && type(104) === 1) modern -= 1;                      // 104 jako punkt (kreska spadku) = dawna numeracja
     const sprint = map.geo.scale > 0 && map.geo.scale <= 5000;
     return sprint ? (modern >= 0 ? 'issprom2019' : 'issom2007') : (modern >= 0 ? 'isom2017' : 'isom2000');
   }
@@ -104,7 +117,10 @@
     if (overrides && overrides[key] && KIND[overrides[key]]) return overrides[key];
     const set = SETS[setId];
     let k = set.sub[sym.num] || set.table[(sym.num / 1000) | 0] || 'ignore';
-    if (typeof k === 'object') k = sym.type === 3 ? k.area : sym.type === 2 ? k.line : 'ignore';
+    if (typeof k === 'object') k = (sym.type === 3 ? k.area : sym.type === 2 ? k.line : null) || 'ignore';
+    if (k === 'pavedline') k = sym.lineWidth >= 0.3 ? 'road' : 'ignore'; // gruba linia = droga, cienka = krawędź nawierzchni
+    // pierwsze wydanie ISSprOM 2019 nazywało symbol 410 "Impassable vegetation"; od 2019-2 tę rolę ma 411
+    if (((sym.num / 1000) | 0) === 410 && /impass|uncross|nieprzeb|nie do prze/i.test(sym.name || '')) k = 'impveg';
     const mode = KIND[k].mode;
     // symbol o złym typie geometrii dla danego rodzaju (np. punktowy "budynek") nie jest nanoszony
     if (sym.type === 1 && mode !== 'gap') return 'ignore';
@@ -214,7 +230,7 @@
     ignore: 'pomijany', contour: 'warstwica', open: 'teren otwarty', rough: 'otwarty nierówny / z drzewami', forest: 'las (biały)',
     slow: 'zielony jasny', walk: 'zielony średni', fight: 'zielony ciemny', cult: 'pole uprawne / sad', paved: 'utwardzone', barerock: 'naga skała',
     under1: 'podszyt: wolny bieg', under2: 'podszyt: marsz', marsh: 'bagno', softmarsh: 'bagno niewyraźne', stony: 'teren kamienisty', boulders: 'rumowisko',
-    sand: 'piasek', lake: 'woda nie do przejścia', shallow: 'woda płytka', impveg: 'zieleń nie do przejścia', forbidden: 'teren zakazany',
+    sand: 'piasek', stonyfight: 'kamienie: bardzo trudny teren', rockarea: 'skała / głaz nie do przejścia', obstarea: 'murek (powierzchnia) do przejścia', lake: 'woda nie do przejścia', shallow: 'woda płytka', impveg: 'zieleń nie do przejścia', forbidden: 'teren zakazany',
     building: 'budynek', canopy: 'zadaszenie (przejście)', stream: 'strumień', ditch: 'mały rów', bank: 'skarpa / skałka do przejścia',
     lowobst: 'niska przeszkoda', fence: 'płot / mur do przejścia', marshline: 'wąskie bagno', road: 'droga', track: 'droga gruntowa',
     footpath: 'ścieżka', smallpath: 'mała ścieżka', faintpath: 'ścieżka słabo widoczna', ride: 'przecinka', cliff: 'skała nie do przejścia',

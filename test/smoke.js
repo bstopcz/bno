@@ -236,6 +236,26 @@ if (typeof document !== 'undefined') {
   const leg2 = routeLeg(costGrid(g2.cls), g2.w, g2.h, px(80, 80), px(170, 50));
   assert.ok(leg2.best.cost <= leg.best.cost + 0.01 && !g2.cls.includes(T.WALL), 'po zmianie płot znika z siatki');
   print('OK OCAD -> siatka, m/pole', g.mpp.toFixed(2));
+  // tabele symboli: najważniejsze numery w czterech zestawach (wg specyfikacji IOF)
+  const k = (set, num, type, name, lw) => BnoSymbols.kindOf(set, { num: Math.round(num * 1000), type, name: name || '', lineWidth: lw || 0 });
+  const expect = [
+    ['isom2017', 402, 3, 'open'], ['isom2017', 403, 3, 'rough'], ['isom2017', 409, 3, 'under2'], ['isom2017', 201, 2, 'cliff'], ['isom2017', 202, 2, 'bank'],
+    ['isom2017', 301, 3, 'lake'], ['isom2017', 304, 2, 'stream'], ['isom2017', 307, 3, 'lake'], ['isom2017', 505, 2, 'footpath'], ['isom2017', 507, 2, 'faintpath'],
+    ['isom2017', 516, 2, 'fence'], ['isom2017', 518, 2, 'wall'], ['isom2017', 519, 1, 'crossing'], ['isom2017', 520, 3, 'forbidden'], ['isom2017', 521, 3, 'building'],
+    ['isom2017', 601, 2, 'ignore'], ['isom2017', 208, 3, 'ignore'], ['isom2017', 709, 3, 'oob'], ['isom2017', 532, 2, 'footpath'],
+    ['issprom2019', 411, 3, 'impveg'], ['issprom2019', 512.1, 2, 'ignore'], ['issprom2019', 512.2, 2, 'bridge'], ['issprom2019', 515, 2, 'wall'],
+    ['issprom2019', 513, 2, 'fence'], ['issprom2019', 522, 3, 'canopy'], ['issprom2019', 714, 3, 'oob'], ['issprom2019', 208, 3, 'stony'],
+    ['isom2000', 519, 2, 'fence'], ['isom2000', 521, 2, 'wall'], ['isom2000', 524, 2, 'wall'], ['isom2000', 526, 3, 'building'], ['isom2000', 528, 3, 'forbidden'],
+    ['isom2000', 506, 2, 'footpath'], ['isom2000', 305, 2, 'stream'], ['isom2000', 309, 3, 'lake'], ['isom2000', 415, 3, 'cult'], ['isom2000', 707, 2, 'oobline'],
+    ['issom2007', 421, 3, 'impveg'], ['issom2007', 524, 2, 'wall'], ['issom2007', 526.1, 3, 'building'], ['issom2007', 526.2, 3, 'canopy'],
+    ['issom2007', 528.1, 3, 'forbidden'], ['issom2007', 304.1, 3, 'lake'], ['issom2007', 529, 3, 'paved'], ['issom2007', 506.1, 2, 'footpath'],
+  ];
+  for (const [set, num, type, want] of expect) assert.strictEqual(k(set, num, type), want, set + ' ' + num);
+  assert.strictEqual(k('issprom2019', 501.6, 2, 'road', 0.35), 'road', 'droga utwardzona narysowana linią');
+  assert.strictEqual(k('issprom2019', 501.1, 2, 'edge', 0.1), 'ignore', 'krawędź nawierzchni');
+  assert.strictEqual(k('issprom2019', 410, 3, 'Impassable vegetation'), 'impveg', '410 w pierwszym wydaniu ISSprOM 2019');
+  assert.strictEqual(k('issprom2019', 410, 3, 'Vegetation: fight'), 'fight');
+  print('OK tabele symboli:', expect.length + 4, 'sprawdzonych wpisów');
 }
 
 // --- okno wyszukiwania: krótki przebieg na dużej siatce nie przeszukuje całej mapy, a wynik jest ten sam ---

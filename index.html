@@ -369,6 +369,17 @@
   </div>
   <p class="note">Ostatnia kolumna: ile metrów ścieżki zajmuje tyle samo czasu, co 100 m tego terenu.</p>
 
+  <h2>Skąd te liczby</h2>
+  <ul>
+    <li>Specyfikacja map ISOM 2017-2 dzieli teren na kategorie prędkości względem zwykłego lasu: las 80–100%,
+        wolny bieg 60–80%, marsz 20–60%, przedzieranie poniżej 20%, a ścieżki, nawierzchnie i teren otwarty ponad 100%.</li>
+    <li>Mnożniki w tabeli to środki tych przedziałów przeliczone względem ścieżki: zielony jasny i podszyt „wolny bieg” ok. 70% lasu,
+        zielony średni i podszyt „marsz” ok. 40%, zielony ciemny ok. 13%.</li>
+    <li>Dla bagna, rumowisk i skarp specyfikacja nie podaje procentów, więc te mnożniki są moim oszacowaniem.</li>
+    <li>Przy pliku OCAD przeszkody „nie do przejścia” to symbole opisane w specyfikacji jako nieprzekraczalne (skała 201, woda 301,
+        bagno 307, mur 515, płot 518, budynek 521) oraz tereny i granice zakazane przepisami (520, 708, 709, w sprincie też 411 i 714).</li>
+  </ul>
+
   <h2>Przewyższenia</h2>
   <ul>
     <li>1 m w górę liczy się jak <b><span data-climb></span> m po płaskim w tym samym terenie</b>. Podejście w średniej zieleni
