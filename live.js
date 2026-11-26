@@ -181,6 +181,34 @@
   // Wyświetlamy PDF, a teren, skalę i położenie na świecie bierzemy z OCAD-a. PDF jest dopasowywany automatycznie.
   let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
   let gridCtx = null; // gotowa siatka terenu treningu: { w, h, cls, contour }
+  // Trasa treningu: punkty w kolejności biegu (piksele obrazu) i numer punktu, do którego teraz biegniesz.
+  let course = null, courseAt = -1, courseOrdered = true;
+
+  function setCourse(points, ordered) {
+    course = points && points.length ? points : null;
+    courseAt = -1; courseOrdered = ordered !== false;
+    showNext();
+  }
+  function showNext() {
+    const b = $('lnext'), n = course ? course.filter((p) => p.type !== 'start').length : 0;
+    b.hidden = !course;
+    if (!course) return;
+    const done = course.slice(0, courseAt + 1).filter((p) => p.type !== 'start').length;
+    b.textContent = courseAt >= course.length - 1 ? 'Trasa ukończona' : `Następny punkt (${done + 1}/${n})`;
+    b.disabled = courseAt >= course.length - 1;
+    $('larnext').textContent = b.textContent;
+  }
+  function nextControl() {
+    if (!course || courseAt >= course.length - 1) return;
+    courseAt++;
+    if (course[courseAt].type === 'start' && courseAt < course.length - 1) courseAt++; // ze startu od razu na pierwszy punkt
+    target = { x: course[courseAt].x, y: course[courseAt].y };
+    showNext();
+    setTapMode(null);
+    computeRoute();
+  }
+  $('lnext').addEventListener('click', nextControl);
+  $('larnext').addEventListener('click', nextControl);
 
   // Siatka terenu zapisana jako PNG (czerwony = kategoria, zielony = warstwica), przygotowana przez admina.
   function loadGrid(url) {
@@ -282,6 +310,13 @@
       note += `. Kalibracja automatyczna z georeferencji (${crs.name})`;
       if (Math.abs(map.geo.angle) > 0.01) note += `; mapa obrócona o ${map.geo.angle.toFixed(1)}° – ten przypadek nie był sprawdzony w terenie`;
     } else note += '. Plik nie ma georeferencji w znanym układzie – skalibruj mapę ręcznie dwoma punktami';
+    // trasa narysowana w pliku OCAD (start, punkty, meta), przeliczona na piksele obrazu
+    const crsPts = BnoSymbols.course(map, setId);
+    if (crsPts) {
+      const pts = crsPts.points.map((p) => ({ x: (p.x - left) / mmImg, y: (top - p.y) / mmImg, type: p.type })).filter((p) => p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H);
+      setCourse(pts, crsPts.ordered);
+      if (pts.length) note += `. Trasa z pliku: ${pts.filter((p) => p.type === 'punkt').length} punktów` + (crsPts.ordered ? '' : ' (kolejności nie udało się odczytać z linii trasy – ustawiona „do najbliższego”)');
+    }
     ocadCtx.note = note + '.';
     refresh();
   }
@@ -297,6 +332,7 @@
       mapImage = opts.image || null;
       ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
       if (opts.grid) loadGrid(opts.grid);
+      setCourse(opts.course || null, opts.courseOrdered);
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -332,7 +368,8 @@
     state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName }),
     openTraining(t) {
       say('Pobieram mapę treningu…');
-      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka });
+      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka,
+        course: Array.isArray(t.trasa) ? t.trasa.map((p) => ({ x: +p.px, y: +p.py, type: p.typ })) : null, courseOrdered: t.trasaKolejnosc });
     },
   };
 
@@ -385,6 +422,8 @@
       rodzaj: ocadCtx ? (ocadCtx.map.geo.scale <= 5000 ? 'sprint' : 'forest') : $('lmode').value,
       ciecie: meta.ciecie != null ? meta.ciecie : parseFloat($('lcontour').value),
       zrodlo: ocadCtx ? 'OCAD' : 'obraz',
+      trasa: course ? course.map((p) => ({ px: r(p.x * es, 10), py: r(p.y * es, 10), typ: p.type })) : undefined,
+      trasaKolejnosc: course ? courseOrdered : undefined,
       kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
     };
     return { files, entry };
@@ -459,6 +498,12 @@
     if (!tapMode || tapMode === 'draw' || x < 0 || y < 0 || x > W || y > H) return;
     if (tapMode === 'target') {
       target = { x, y };
+      if (course) { // stuknięcie przy punkcie trasy: cel wskakuje na jego środek, a "Następny punkt" liczy dalej od niego
+        const reach = cal ? 15 * cal.pxPerM : Math.max(W, H) * 0.015;
+        let best = -1, bd = reach;
+        course.forEach((p, i) => { const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = i; } });
+        if (best >= 0) { target = { x: course[best].x, y: course[best].y }; courseAt = best; showNext(); }
+      }
       setTapMode(null);
       computeRoute();
       return;
@@ -759,6 +804,7 @@
     $('lartext').textContent = text || 'Ustaw cel na mapie, żeby zobaczyć strzałkę.';
 
     drawGround(g); // wstęga trasy na ziemi i lampion przy celu
+    $('larnext').hidden = !(stream && course && g && g.arrived && courseAt < course.length - 1);
     const show = stream && rel != null && !(g && g.arrived);
     $('lararrow').hidden = !show || arMode === 'ribbon';
     $('larpin').hidden = true;

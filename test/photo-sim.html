@@ -112,6 +112,8 @@
   #lararrow polygon { fill: #e53935; stroke: #fff; stroke-width: 4; stroke-linejoin: round; }
   #larpin { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
             border: 5px solid #a000c8; background: rgba(255,255,255,0.35); box-shadow: 0 0 0 2px #fff; }
+  #larnext { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+             pointer-events: auto; font-size: 18px; padding: 14px 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.5); }
   #larcanvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   #larmode { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
              pointer-events: auto; background: rgba(4,19,10,0.78); border-color: var(--accent); }
@@ -221,6 +223,7 @@
     <button id="lgps">Włącz GPS</button>
     <button id="lfollow"></button>
     <button id="ltarget">Ustaw cel</button>
+    <button id="lnext" hidden>Następny punkt</button>
     <button id="ldraw">Narysuj trasę</button>
     <button id="lcam">Kamera</button>
     <select id="lmode" aria-label="Rodzaj mapy">
@@ -262,6 +265,7 @@
       <div id="lmini" hidden></div>
       <button id="lfull">Pełny ekran</button>
       <button id="larmode"></button>
+      <button id="larnext" class="on" hidden>Następny punkt</button>
       <div id="lararrow" hidden><svg viewBox="0 0 100 100"><polygon points="50,4 88,58 64,58 64,96 36,96 36,58 12,58"/></svg></div>
     </div>
   </div>
@@ -458,6 +462,9 @@
 
   <h2>Krok 1. Przygotuj pliki z OCAD-a</h2>
   <ol>
+    <li><b>Trasa (opcjonalnie)</b> – jeśli w pliku <code>.ocd</code> jest narysowana trasa symbolami nadruku (start, punkty
+        kontrolne, meta i linie między nimi), apka ją odczyta. Uczestnik dostanie wtedy przycisk „Następny punkt”,
+        który sam ustawia kolejny punkt jako cel. Trasa musi być też widoczna na eksportowanym obrazie.</li>
     <li><b>Plik mapy <code>.ocd</code></b> – ten, z którego drukujesz mapę. Z niego brany jest teren (co jest ścieżką,
         płotem, budynkiem, terenem zakazanym), warstwice, skala i położenie mapy na świecie.</li>
     <li><b>Obraz tej samej mapy</b> – to, co zobaczy uczestnik. W OCAD-zie: <i>Plik → Eksport</i> i wybierz PDF albo JPG.
