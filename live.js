@@ -6,7 +6,11 @@
   const $ = (id) => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
   const PROC_DIM = 1600;   // rozdzielczość, w której liczona jest trasa
-  const LOOKAHEAD_M = 30;  // strzałka celuje w punkt trasy tyle metrów przed Tobą
+  const TANGENT_M = 9;     // kierunek trasy liczony z tylu metrów linii przed Tobą
+  const RETURN_M = 15;     // dalej od linii niż tyle metrów: strzałka prowadzi z powrotem na trasę
+  const BACK_M = 20;       // tyle metrów wstecz od ostatniego miejsca na trasie jeszcze sprawdzamy
+  const MAX_SPEED = 8;     // m/s: szybciej po trasie się nie przesuniesz (odrzuca skoki GPS)
+  const LOST_FIXES = 3;    // tyle odczytów z rzędu daleko od oczekiwanego miejsca = szukamy na całej trasie
   const MINI_SPAN_M = 220; // tyle metrów terenu mieści się na szerokość minimapy w trybie kamery
   const CAM_HFOV = 55;     // przybliżony poziomy kąt widzenia kamery telefonu (pionowo)
 
@@ -433,13 +437,51 @@
     }, 30);
   }
 
-  function nearestOnRoute(pos) {
-    let best = 0, bestD = Infinity;
-    for (let i = 0; i < route.pts.length; i++) {
-      const d = (route.pts[i].x - pos.x) ** 2 + (route.pts[i].y - pos.y) ** 2;
-      if (d < bestD) { bestD = d; best = i; }
+  // Punkt trasy w odległości c (w pikselach obrazu) od jej początku.
+  function pointAt(r, c) {
+    const cum = r.cum, last = cum.length - 1;
+    if (c <= 0) return r.pts[0];
+    if (c >= cum[last]) return r.pts[last];
+    let lo = 0, hi = last;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= c) lo = m; else hi = m; }
+    const t = (c - cum[lo]) / ((cum[hi] - cum[lo]) || 1);
+    return { x: r.pts[lo].x + (r.pts[hi].x - r.pts[lo].x) * t, y: r.pts[lo].y + (r.pts[hi].y - r.pts[lo].y) * t };
+  }
+
+  // Najbliższe miejsce na odcinku trasy między c0 a c1 (odległości od początku). Zwraca { c, d } w pikselach.
+  function project(r, pos, c0, c1) {
+    let best = null;
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      if (r.cum[i + 1] < c0 || r.cum[i] > c1) continue;
+      const p = r.pts[i], q = r.pts[i + 1], dx = q.x - p.x, dy = q.y - p.y, len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((pos.x - p.x) * dx + (pos.y - p.y) * dy) / len2)) : 0;
+      const d = Math.hypot(p.x + dx * t - pos.x, p.y + dy * t - pos.y);
+      if (!best || d < best.d) best = { c: r.cum[i] + Math.sqrt(len2) * t, d };
     }
-    return { i: best, d: Math.sqrt(bestD) };
+    return best;
+  }
+
+  // "Przyklejenie" do trasy z pamięcią postępu. Szukamy tylko tam, dokąd dało się dobiec od ostatniego
+  // odczytu (trochę do tyłu, do przodu tyle, ile pozwala MAX_SPEED), żeby błąd GPS nie przerzucał Cię na
+  // fragment trasy po drugiej stronie budynku. Dopiero gdy przez LOST_FIXES odczytów z rzędu jesteś daleko
+  // od tego kawałka, szukamy na całej trasie.
+  // Zwraca { c: postęp wzdłuż trasy, d: odległość od niej } w pikselach obrazu.
+  function matchRoute(pos) {
+    if (route.matchFix === fix && route.match) return route.match; // ten sam odczyt GPS: ten sam wynik
+    const k = cal.pxPerM, total = route.cum[route.cum.length - 1], now = Date.now();
+    let m = null;
+    if (route.prog != null) {
+      const fwd = MAX_SPEED * (now - route.progAt) / 1000 + RETURN_M;
+      m = project(route, pos, route.prog - BACK_M * k, route.prog + fwd * k);
+      route.lost = m && m.d <= 2 * RETURN_M * k ? 0 : (route.lost || 0) + 1;
+    }
+    if (!m || route.lost >= LOST_FIXES) {
+      m = project(route, pos, 0, total) || { c: 0, d: Math.hypot(route.pts[0].x - pos.x, route.pts[0].y - pos.y) };
+      route.lost = 0;
+    }
+    route.prog = m.c; route.progAt = now;
+    route.matchFix = fix; route.match = m;
+    return m;
   }
 
   // Zszedłeś z trasy -> liczymy nową od miejsca, w którym jesteś.
@@ -448,29 +490,31 @@
     const pos = position();
     if (!target || !pos || routeNote === 'Liczę trasę…') return;
     if (!route) { if (!routeAt || Date.now() - routeAt > 20000) { if (!routeAt) computeRoute(); } return; }
-    const off = nearestOnRoute(pos).d / cal.pxPerM;
+    const off = matchRoute(pos).d / cal.pxPerM;
     if (off > Math.max(40, 2 * fix.acc) && Date.now() - routeAt > 15000) computeRoute();
   }
 
-  // Kierunek i dystans: { bearing (stopnie od północy), dist (m) } albo null.
+  // Kierunek i dystans albo null. Na trasie strzałka pokazuje kierunek samej linii w miejscu, w którym
+  // jesteś (z najbliższych TANGENT_M metrów), więc zakręt wokół budynku nie jest ścinany na skos.
+  // Dopiero gdy odejdziesz od linii dalej niż RETURN_M, strzałka prowadzi z powrotem na trasę.
   function guidance() {
     const pos = position();
     if (!target || !pos) return null;
     const straight = Math.hypot(target.x - pos.x, target.y - pos.y) / cal.pxPerM;
-    let aim = target, dist = straight, off = 0;
+    let from = pos, aim = target, dist = straight, off = 0, returning = false;
     if (route) {
-      const near = nearestOnRoute(pos);
-      off = near.d / cal.pxPerM;
-      const want = route.cum[near.i] + LOOKAHEAD_M * cal.pxPerM;
-      let j = near.i;
-      while (j < route.pts.length - 1 && route.cum[j] < want) j++;
-      aim = route.pts[j];
-      dist = (route.cum[route.cum.length - 1] - route.cum[near.i]) / cal.pxPerM + near.d / cal.pxPerM;
+      const k = cal.pxPerM, total = route.cum[route.cum.length - 1], m = matchRoute(pos);
+      off = m.d / k;
+      dist = (total - m.c) / k + off;
+      const ahead = pointAt(route, m.c + TANGENT_M * k);
+      if (off > Math.max(RETURN_M, fix.acc)) { aim = ahead; returning = true; }
+      else if (total - m.c > 2 * k) { from = pointAt(route, m.c); aim = ahead; }
     }
+    if (Math.hypot(aim.x - from.x, aim.y - from.y) < 1e-6) { from = pos; aim = target; }
     return {
-      bearing: bearingOf(cal, aim.x - pos.x, aim.y - pos.y), // dokąd biec teraz (po trasie)
+      bearing: bearingOf(cal, aim.x - from.x, aim.y - from.y), // dokąd biec teraz
       targetBearing: bearingOf(cal, target.x - pos.x, target.y - pos.y), // gdzie leży punkt docelowy
-      dist, off, arrived: straight < Math.max(15, fix.acc),
+      dist, off, returning, arrived: straight < Math.max(15, fix.acc),
     };
   }
 
@@ -487,7 +531,7 @@
           const a = Math.abs(rel);
           text += a < 15 ? ' · prosto' : a > 135 ? ' · zawróć' : (rel > 0 ? ' · w prawo ' : ' · w lewo ') + Math.round(a / 5) * 5 + '°';
         }
-        if (g.off > 25) text += ` · jesteś ${Math.round(g.off / 5) * 5} m od trasy`;
+        if (g.returning) text += ` · wróć na trasę (${Math.round(g.off / 5) * 5} m obok)`;
         if (!route) text += ' · brak trasy, kierunek prosto na cel';
         if (routeNote) text += ' · ' + routeNote;
       }
