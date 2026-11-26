@@ -1,0 +1,571 @@
+// Zakładka "Na żywo": pozycja z GPS na mapie, trasa do celu i strzałka na obrazie z kamery.
+(function () {
+  'use strict';
+  const { fit, toPixel, headingVector, bearingOf, parseLatLon, distance } = BnoGeo;
+  const { analyze, costGrid, routeLeg } = BnoCore;
+  const $ = (id) => document.getElementById(id);
+  const SVG = 'http://www.w3.org/2000/svg';
+  const PROC_DIM = 1600;   // rozdzielczość, w której liczona jest trasa
+  const LOOKAHEAD_M = 30;  // strzałka celuje w punkt trasy tyle metrów przed Tobą
+  const MINI_SPAN_M = 220; // tyle metrów terenu mieści się na szerokość minimapy w trybie kamery
+  const CAM_HFOV = 55;     // przybliżony poziomy kąt widzenia kamery telefonu (pionowo)
+
+  const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
+  const el = {};
+  for (const [name, tag] of [['track', 'polyline'], ['alt', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
+    ['draw', 'polyline'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
+    el[name] = document.createElementNS(SVG, tag);
+    el[name].setAttribute('class', 'l-' + name);
+    svg.append(el[name]);
+  }
+
+  let W = 0, H = 0, mapKey = null;
+  let s = 1, ox = 0, oy = 0;           // ekran = mapa * s + (ox, oy)
+  let vs = 1;                           // skala aktualnie widocznego widoku (mapa albo minimapa)
+  let pairs = [], cal = null;           // punkty kalibracji i dopasowanie
+  let fix = null, heading = null, pitch = null, watchId = null, wake = null;
+  let track = [];                       // [{lat, lon}]
+  let follow = true, tapMode = null, pending = null; // tapMode: null | 'cal' | 'target' | 'draw'
+  let strokes = [];                     // kreski rysowanej ręcznie trasy (w pikselach mapy)
+  let proc = null;                      // { k, w, h, cost } – teren do liczenia trasy
+  let target = null, route = null, routes = [], routeAt = 0, routeNote = ''; // route = wybrany wariant
+  let stream = null;
+
+  const say = (text) => { $('lstatus').textContent = text; };
+
+  // ---------- widok mapy ----------
+  function applyView() {
+    if (stream) {
+      // tryb kamery: minimapa wyśrodkowana na Tobie i obrócona tak, żeby "góra" była tam, gdzie patrzysz
+      const r = $('lmini').getBoundingClientRect(), pos = position();
+      if (pos) {
+        vs = r.width / (MINI_SPAN_M * cal.pxPerM);
+        let ang = 0;
+        if (heading != null) { const v = headingVector(cal, heading); ang = Math.atan2(v.x, -v.y); }
+        world.style.transform = `translate(${r.width / 2}px, ${r.height * 0.62}px) rotate(${-ang}rad) scale(${vs}) translate(${-pos.x}px, ${-pos.y}px)`;
+      } else {
+        vs = Math.min(r.width / W, r.height / H);
+        world.style.transform = `scale(${vs})`;
+      }
+    } else {
+      vs = s;
+      world.style.transform = `translate(${ox}px, ${oy}px) scale(${s})`;
+    }
+    drawMarkers();
+  }
+
+  function fitView() {
+    const r = stage.getBoundingClientRect();
+    s = Math.min(r.width / W, r.height / H);
+    ox = (r.width - W * s) / 2; oy = (r.height - H * s) / 2;
+    applyView();
+  }
+
+  function zoomAt(x, y, f) {
+    const ns = Math.min(12, Math.max(0.02, s * f));
+    f = ns / s;
+    ox = x - (x - ox) * f; oy = y - (y - oy) * f; s = ns;
+  }
+
+  const position = () => (cal && fix ? toPixel(cal, fix.lat, fix.lon) : null);
+  const fmt = (pts) => pts.map((p) => p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+
+  function drawMarkers() {
+    if (!W) return;
+    const u = 1 / vs; // 1 piksel ekranu w jednostkach mapy
+    el.cals.replaceChildren();
+    pairs.forEach((p) => {
+      const c = document.createElementNS(SVG, 'circle');
+      c.setAttribute('cx', p.px); c.setAttribute('cy', p.py); c.setAttribute('r', 6 * u);
+      c.setAttribute('stroke-width', 2 * u);
+      el.cals.append(c);
+    });
+    el.pend.style.display = pending ? '' : 'none';
+    if (pending) {
+      el.pend.setAttribute('cx', pending.px); el.pend.setAttribute('cy', pending.py);
+      el.pend.setAttribute('r', 9 * u); el.pend.setAttribute('stroke-width', 3 * u);
+    }
+    const sketch = tapMode === 'draw' ? strokes.flat() : [];
+    el.draw.style.display = sketch.length > 1 ? '' : 'none';
+    if (sketch.length > 1) { el.draw.setAttribute('points', fmt(sketch)); el.draw.setAttribute('stroke-width', 4 * u); }
+    el.target.style.display = target ? '' : 'none';
+    if (target) {
+      el.target.setAttribute('cx', target.x); el.target.setAttribute('cy', target.y);
+      el.target.setAttribute('r', 14 * u); el.target.setAttribute('stroke-width', 3.5 * u);
+    }
+    el.route.style.display = route ? '' : 'none';
+    if (route) { el.route.setAttribute('points', fmt(route.pts)); el.route.setAttribute('stroke-width', 4 * u); }
+    const other = routes.find((r) => r !== route);
+    el.alt.style.display = other ? '' : 'none';
+    if (other) {
+      el.alt.setAttribute('points', fmt(other.pts)); el.alt.setAttribute('stroke-width', 3 * u);
+      el.alt.setAttribute('stroke-dasharray', `${9 * u} ${7 * u}`);
+    }
+
+    const pos = position();
+    for (const k of ['dot', 'acc', 'head', 'track']) el[k].style.display = pos ? '' : 'none';
+    if (!pos) return;
+    el.dot.setAttribute('cx', pos.x); el.dot.setAttribute('cy', pos.y);
+    el.dot.setAttribute('r', 8 * u); el.dot.setAttribute('stroke-width', 3 * u);
+    el.acc.setAttribute('cx', pos.x); el.acc.setAttribute('cy', pos.y);
+    el.acc.setAttribute('r', Math.max(8 * u, fix.acc * cal.pxPerM));
+    el.track.setAttribute('points', fmt(track.map((t) => toPixel(cal, t.lat, t.lon))));
+    el.track.setAttribute('stroke-width', 2.5 * u);
+    if (heading == null) { el.head.style.display = 'none'; return; }
+    const v = headingVector(cal, heading), a = 12 * u, b = 30 * u, c = 9 * u;
+    el.head.setAttribute('points', fmt([
+      { x: pos.x + v.x * b, y: pos.y + v.y * b },
+      { x: pos.x + v.x * a - v.y * c, y: pos.y + v.y * a + v.x * c },
+      { x: pos.x + v.x * a + v.y * c, y: pos.y + v.y * a - v.x * c },
+    ]));
+  }
+
+  function refresh() {
+    const pos = position();
+    if (follow && pos && W) {
+      const r = stage.getBoundingClientRect();
+      ox = r.width / 2 - pos.x * s; oy = r.height / 2 - pos.y * s;
+    }
+    maybeReroute();
+    applyView();
+    describe();
+    renderVariants();
+    guide();
+  }
+
+  function describe() {
+    const gps = fix ? `GPS ±${Math.round(fix.acc)} m` : (watchId != null ? 'GPS: czekam na sygnał…' : 'GPS wyłączony');
+    let c;
+    if (!W) c = 'Wczytaj mapę.';
+    else if (pairs.length === 0) c = 'Mapa bez kalibracji – dodaj 2 punkty.';
+    else if (!cal) c = pairs.length === 1 ? 'Jest 1 punkt kalibracji – dodaj drugi, min. 100 m dalej.' : 'Punkty kalibracji są za blisko siebie.';
+    else {
+      c = `Kalibracja: ${pairs.length} pkt, rozstaw ${Math.round(cal.spreadM)} m`;
+      if (pairs.length > 2) c += `, błąd ok. ${Math.round(cal.rmsM)} m`;
+      if (cal.spreadM < 100) c += ' (punkty blisko siebie – pozycja może pływać)';
+      const p = position();
+      if (p && (p.x < 0 || p.y < 0 || p.x > W || p.y > H)) c += '. Jesteś poza mapą.';
+    }
+    if (fix && fix.acc > 100) c += ' Pozycja jest bardzo niedokładna – to wygląda na komputer bez GPS. Otwórz stronę na telefonie (instrukcja na dole).';
+    say(gps + ' · ' + c);
+  }
+
+  // ---------- mapa ----------
+  $('lfile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (/\.ocd$/i.test(file.name)) {
+      say('Plików OCAD jeszcze nie czytam. W OCAD wybierz Plik → Eksport → JPEG lub PNG (300 dpi) i wczytaj ten obraz.');
+      return;
+    }
+    img.onload = () => {
+      W = img.naturalWidth; H = img.naturalHeight;
+      world.style.width = W + 'px'; world.style.height = H + 'px';
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('width', W); svg.setAttribute('height', H);
+      mapKey = 'bno-cal:' + file.name + ':' + file.size;
+      pairs = [];
+      try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
+      cal = fit(pairs); track = []; pending = null; proc = null; target = null; route = null; routes = []; routeNote = '';
+      $('ltools').hidden = false;
+      fitView(); describe(); guide();
+    };
+    img.onerror = () => say('Nie udało się wczytać tego pliku jako obrazu.');
+    img.src = URL.createObjectURL(file);
+  });
+
+  function savePairs() {
+    cal = fit(pairs);
+    try { localStorage.setItem(mapKey, JSON.stringify(pairs)); } catch (err) { /* jw. */ }
+  }
+
+  // ---------- gesty: przesuwanie, szczypanie, stuknięcie ----------
+  const ptrs = new Map();
+  let moved = 0, downAt = 0;
+  const local = (e) => { const r = stage.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+
+  stage.addEventListener('pointerdown', (e) => {
+    if (stream) return; // w trybie kamery mapy nie ruszamy
+    try { stage.setPointerCapture(e.pointerId); } catch (err) { /* np. zdarzenie syntetyczne */ }
+    ptrs.set(e.pointerId, local(e));
+    if (ptrs.size === 1) { moved = 0; downAt = Date.now(); } else moved = 999;
+    if (tapMode === 'draw' && ptrs.size === 1 && W) {
+      const p = local(e);
+      strokes.push([{ x: (p.x - ox) / s, y: (p.y - oy) / s }]);
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!ptrs.has(e.pointerId) || !W) return;
+    const prev = ptrs.get(e.pointerId), now = local(e);
+    if (ptrs.size === 1 && tapMode === 'draw') {
+      // jeden palec rysuje, dwa palce przesuwają i powiększają mapę
+      const st = strokes[strokes.length - 1], q = { x: (now.x - ox) / s, y: (now.y - oy) / s };
+      if (st && Math.hypot(q.x - st[st.length - 1].x, q.y - st[st.length - 1].y) * s > 4) st.push(q);
+      moved += Math.abs(now.x - prev.x) + Math.abs(now.y - prev.y);
+    } else if (ptrs.size === 1) {
+      ox += now.x - prev.x; oy += now.y - prev.y;
+      moved += Math.abs(now.x - prev.x) + Math.abs(now.y - prev.y);
+    } else if (ptrs.size === 2) {
+      let other;
+      for (const [id, p] of ptrs) if (id !== e.pointerId) other = p;
+      const d0 = Math.hypot(prev.x - other.x, prev.y - other.y), d1 = Math.hypot(now.x - other.x, now.y - other.y);
+      const m0 = { x: (prev.x + other.x) / 2, y: (prev.y + other.y) / 2 }, m1 = { x: (now.x + other.x) / 2, y: (now.y + other.y) / 2 };
+      ox += m1.x - m0.x; oy += m1.y - m0.y;
+      if (d0 > 10) zoomAt(m1.x, m1.y, d1 / d0);
+    }
+    ptrs.set(e.pointerId, now);
+    if (moved > 8 && follow) setFollow(false);
+    applyView();
+  });
+  stage.addEventListener('pointerup', (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    const p = ptrs.get(e.pointerId);
+    ptrs.delete(e.pointerId);
+    if (tapMode === 'draw') { // kropka albo początek gestu dwoma palcami to nie kreska
+      if (strokes.length && strokes[strokes.length - 1].length < 2) strokes.pop();
+      drawMarkers();
+      return;
+    }
+    if (ptrs.size === 0 && moved < 8 && Date.now() - downAt < 600 && W) tap((p.x - ox) / s, (p.y - oy) / s);
+  });
+  stage.addEventListener('pointercancel', (e) => ptrs.delete(e.pointerId));
+  stage.addEventListener('wheel', (e) => {
+    if (!W || stream) return;
+    e.preventDefault();
+    const p = local(e);
+    zoomAt(p.x, p.y, e.deltaY < 0 ? 1.25 : 0.8);
+    applyView();
+  }, { passive: false });
+  window.addEventListener('resize', () => { if (W) applyView(); });
+
+  function tap(x, y) {
+    if (!tapMode || tapMode === 'draw' || x < 0 || y < 0 || x > W || y > H) return;
+    if (tapMode === 'target') {
+      target = { x, y };
+      setTapMode(null);
+      computeRoute();
+      return;
+    }
+    pending = { px: x, py: y };
+    $('lcalpick').hidden = false;
+    $('lhint').textContent = 'Skąd wziąć współrzędne tego punktu?';
+    $('lcalgps').textContent = fix ? `Stoję tu teraz (GPS ±${Math.round(fix.acc)} m)` : 'Stoję tu teraz (najpierw włącz GPS)';
+    $('lcalgps').disabled = !fix;
+    drawMarkers();
+  }
+
+  function setTapMode(mode) {
+    tapMode = mode; pending = null;
+    $('lpanel').hidden = !mode;
+    $('lcalpick').hidden = true;
+    $('ldrawbtns').hidden = mode !== 'draw';
+    if (mode === 'draw') { strokes = []; setFollow(false); }
+    $('lhint').textContent = {
+      target: 'Stuknij na mapie punkt, do którego biegniesz.',
+      draw: 'Narysuj palcem trasę od miejsca, w którym jesteś, do celu. Możesz odrywać palec i rysować dalej. Dwa palce przesuwają i powiększają mapę.',
+      cal: 'Stuknij na mapie miejsce, które potrafisz wskazać w terenie (skrzyżowanie, róg budynku).',
+    }[mode] || '';
+    if (mode && stream) setCamera(false);
+    drawMarkers();
+  }
+
+  // ---------- kalibracja ----------
+  function addPair(lat, lon) {
+    pairs.push({ lat, lon, px: pending.px, py: pending.py });
+    savePairs();
+    setTapMode(null);
+    refresh();
+  }
+
+  // ---------- trasa rysowana ręcznie ----------
+  $('ldraw').addEventListener('click', () => setTapMode('draw'));
+  $('ldrawundo').addEventListener('click', () => { strokes.pop(); drawMarkers(); });
+  $('ldrawdone').addEventListener('click', () => {
+    const pts = strokes.flat();
+    if (pts.length < 2) { $('lhint').textContent = 'Najpierw narysuj trasę palcem na mapie.'; return; }
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    target = pts[pts.length - 1];
+    route = { pts, cum, custom: true };
+    routes = [route]; routeNote = ''; routeAt = Date.now();
+    setTapMode(null);
+    refresh();
+  });
+
+  $('lcaladd').addEventListener('click', () => setTapMode('cal'));
+  $('lcancel').addEventListener('click', () => setTapMode(null));
+  $('lcalgps').addEventListener('click', () => { if (fix && pending) addPair(fix.lat, fix.lon); });
+  $('lcalsave').addEventListener('click', () => {
+    const ll = parseLatLon($('lcalinput').value);
+    if (!ll || !pending) { $('lhint').textContent = 'Nie rozumiem tych współrzędnych. Wpisz np. 52.2297, 21.0122 (szerokość, długość).'; return; }
+    $('lcalinput').value = '';
+    addPair(ll.lat, ll.lon);
+  });
+  $('lcalclear').addEventListener('click', () => {
+    const b = $('lcalclear');
+    if (b.dataset.armed !== '1') {
+      b.dataset.armed = '1'; b.textContent = 'Na pewno usunąć?';
+      setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Usuń kalibrację'; }, 3000);
+      return;
+    }
+    b.dataset.armed = ''; b.textContent = 'Usuń kalibrację';
+    pairs = []; track = []; route = null; routes = []; savePairs(); refresh();
+  });
+
+  // ---------- trasa do celu ----------
+  function ensureProc() {
+    if (proc) return;
+    const k = Math.min(1, PROC_DIM / Math.max(W, H));
+    const w = Math.round(W * k), h = Math.round(H * k);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(img, 0, 0, w, h);
+    const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value);
+    proc = { k, w, h, cost: costGrid(res.cls) };
+  }
+
+  function toRoute(part) {
+    const pts = [];
+    const path = part.path, step = Math.max(1, Math.round(path.length / 1500));
+    for (let i = 0; i < path.length; i += step) pts.push({ x: (path[i] % proc.w + 0.5) / proc.k, y: (((path[i] / proc.w) | 0) + 0.5) / proc.k });
+    pts.push({ x: target.x, y: target.y });
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    return { pts, cum, cost: part.cost };
+  }
+
+  // Przyciski wyboru wariantu (A = najszybszy, B = alternatywa).
+  let variantsKey = '';
+  function renderVariants() {
+    const len = (r) => (cal ? Math.round(r.cum[r.cum.length - 1] / cal.pxPerM / 10) * 10 : null);
+    const key = routes.map((r) => len(r) + ':' + (r === route) + ':' + !!r.custom).join('|');
+    if (key === variantsKey) return;
+    variantsKey = key;
+    const box = $('lvariants');
+    box.replaceChildren();
+    box.hidden = routes.length < 2 && !(route && route.custom);
+    routes.forEach((r, i) => {
+      const b = document.createElement('button');
+      if (r.custom) b.textContent = 'Twoja trasa' + (len(r) == null ? '' : `: ${len(r)} m`);
+      else {
+        const slower = Math.round((r.cost / routes[0].cost - 1) * 100);
+        b.textContent = `Wariant ${'AB'[i]}: ${len(r)} m` + (i === 0 ? ' · najszybszy' : ` · ok. ${slower}% wolniejszy`);
+      }
+      b.classList.toggle('on', r === route);
+      b.addEventListener('click', () => { route = r; refresh(); });
+      box.append(b);
+    });
+  }
+
+  function computeRoute() {
+    route = null; routes = [];
+    const pos = position();
+    if (!target) { refresh(); return; }
+    if (!pos) { routeNote = 'Cel ustawiony. Trasa policzy się, gdy będzie kalibracja i pozycja z GPS.'; refresh(); return; }
+    if (pos.x < 0 || pos.y < 0 || pos.x >= W || pos.y >= H) { routeNote = 'Jesteś poza mapą – nie policzę trasy.'; refresh(); return; }
+    routeNote = 'Liczę trasę…';
+    guide();
+    setTimeout(() => {
+      try {
+        ensureProc();
+        const clamp = (v, m) => Math.min(m - 1, Math.max(0, Math.round(v)));
+        const a = { x: clamp(pos.x * proc.k, proc.w), y: clamp(pos.y * proc.k, proc.h) };
+        const b = { x: clamp(target.x * proc.k, proc.w), y: clamp(target.y * proc.k, proc.h) };
+        const leg = routeLeg(proc.cost, proc.w, proc.h, a, b);
+        routeAt = Date.now();
+        if (!leg.best) {
+          routeNote = 'Nie znajduję przejścia do celu (teren nie do przejścia) – strzałka pokazuje kierunek na wprost.';
+        } else {
+          routes = [leg.best, leg.alt].filter(Boolean).map(toRoute);
+          route = routes[0];
+          routeNote = '';
+        }
+      } catch (err) {
+        routeNote = 'Błąd liczenia trasy: ' + err.message;
+      }
+      refresh();
+    }, 30);
+  }
+
+  function nearestOnRoute(pos) {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < route.pts.length; i++) {
+      const d = (route.pts[i].x - pos.x) ** 2 + (route.pts[i].y - pos.y) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return { i: best, d: Math.sqrt(bestD) };
+  }
+
+  // Zszedłeś z trasy -> liczymy nową od miejsca, w którym jesteś.
+  function maybeReroute() {
+    if (route && route.custom) return; // własnej trasy nie poprawiamy
+    const pos = position();
+    if (!target || !pos || routeNote === 'Liczę trasę…') return;
+    if (!route) { if (!routeAt || Date.now() - routeAt > 20000) { if (!routeAt) computeRoute(); } return; }
+    const off = nearestOnRoute(pos).d / cal.pxPerM;
+    if (off > Math.max(40, 2 * fix.acc) && Date.now() - routeAt > 15000) computeRoute();
+  }
+
+  // Kierunek i dystans: { bearing (stopnie od północy), dist (m) } albo null.
+  function guidance() {
+    const pos = position();
+    if (!target || !pos) return null;
+    const straight = Math.hypot(target.x - pos.x, target.y - pos.y) / cal.pxPerM;
+    let aim = target, dist = straight;
+    if (route) {
+      const near = nearestOnRoute(pos);
+      const want = route.cum[near.i] + LOOKAHEAD_M * cal.pxPerM;
+      let j = near.i;
+      while (j < route.pts.length - 1 && route.cum[j] < want) j++;
+      aim = route.pts[j];
+      dist = (route.cum[route.cum.length - 1] - route.cum[near.i]) / cal.pxPerM + near.d / cal.pxPerM;
+    }
+    return { bearing: bearingOf(cal, aim.x - pos.x, aim.y - pos.y), dist, arrived: straight < Math.max(15, fix.acc) };
+  }
+
+  function guide() {
+    const g = guidance();
+    let text = routeNote, rel = null;
+    if (g && !routeNote.startsWith('Liczę')) {
+      if (g.arrived) text = 'Jesteś przy punkcie.';
+      else {
+        text = `${Math.round(g.dist / 10) * 10} m do celu`;
+        if (heading == null) text += ' · brak kompasu, kieruj się mapą';
+        else {
+          rel = ((g.bearing - heading + 540) % 360) - 180;
+          const a = Math.abs(rel);
+          text += a < 15 ? ' · prosto' : a > 135 ? ' · zawróć' : (rel > 0 ? ' · w prawo ' : ' · w lewo ') + Math.round(a / 5) * 5 + '°';
+        }
+        if (routeNote) text += ' · ' + routeNote;
+      }
+    } else if (!target && W) text = '';
+    $('lguide').textContent = text;
+    $('lartext').textContent = text || 'Ustaw cel na mapie, żeby zobaczyć strzałkę.';
+
+    const show = stream && rel != null && !(g && g.arrived);
+    $('lararrow').hidden = !show;
+    $('larpin').hidden = true;
+    if (!show) return;
+    $('lararrow').style.transform = `translateX(-50%) perspective(420px) rotateX(58deg) rotateZ(${rel.toFixed(1)}deg)`;
+    if (Math.abs(rel) < CAM_HFOV / 2) { // cel w kadrze: znacznik na horyzoncie
+      const r = stage.getBoundingClientRect();
+      const x = r.width / 2 + Math.tan(rel * Math.PI / 180) / Math.tan(CAM_HFOV / 2 * Math.PI / 180) * r.width / 2;
+      const tilt = pitch == null ? 0 : Math.max(-35, Math.min(35, pitch - 90));
+      $('larpin').hidden = false;
+      $('larpin').style.left = x + 'px';
+      $('larpin').style.top = (r.height * (0.45 + tilt / 90)) + 'px';
+    }
+  }
+
+  $('ltarget').addEventListener('click', () => setTapMode('target'));
+  $('lmode').addEventListener('change', () => { proc = null; if (target && !(route && route.custom)) computeRoute(); });
+
+  // ---------- kamera ----------
+  async function setCamera(on) {
+    if (on) {
+      if (!navigator.mediaDevices || !window.isSecureContext) { say('Kamera działa tylko na stronie otwartej przez HTTPS (albo localhost).'); return; }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        video.srcObject = stream;
+        video.play().catch(() => {}); // nie czekamy: część przeglądarek rozstrzyga to dopiero po pierwszej klatce
+      } catch (err) {
+        stream = null;
+        say('Nie mogę włączyć kamery: ' + (err.name === 'NotAllowedError' ? 'brak zgody na kamerę dla tej strony.' : err.message));
+        return;
+      }
+    } else if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      stream = null; video.srcObject = null;
+    }
+    video.hidden = !stream; $('lar').hidden = !stream; $('lmini').hidden = !stream;
+    if (stream) $('lmini').append(world); else stage.prepend(world); // ta sama mapa: duża albo jako minimapa
+    $('lcam').textContent = stream ? 'Pokaż mapę' : 'Kamera';
+    $('lcam').classList.toggle('on', !!stream);
+    if (stream) stage.scrollIntoView({ block: 'start' }); // obraz z kamery na cały ekran telefonu
+    refresh();
+  }
+  $('lcam').addEventListener('click', () => { startCompass(); setCamera(!stream); });
+
+  // ---------- GPS i kompas ----------
+  function setFollow(on) {
+    follow = on;
+    $('lfollow').textContent = on ? 'Śledzenie: wł.' : 'Śledzenie: wył.';
+    $('lfollow').classList.toggle('on', on);
+  }
+  $('lfollow').addEventListener('click', () => { setFollow(!follow); refresh(); });
+
+  // Kierunek, w który patrzy tylna kamera telefonu trzymanego pionowo (wzór z normy W3C DeviceOrientation).
+  function cameraHeading(alpha, beta, gamma) {
+    const d = Math.PI / 180;
+    const cX = Math.cos(beta * d), cY = Math.cos(gamma * d), cZ = Math.cos(alpha * d);
+    const sX = Math.sin(beta * d), sY = Math.sin(gamma * d), sZ = Math.sin(alpha * d);
+    const vx = -cZ * sY - sZ * sX * cY, vy = -sZ * sY + cZ * sX * cY;
+    return (Math.atan2(vx, vy) / d + 360) % 360;
+  }
+
+  function onOrientation(e) {
+    let h = null;
+    const upright = typeof e.beta === 'number' && e.beta > 45 && typeof e.gamma === 'number';
+    if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;             // iOS
+    else if (e.absolute && typeof e.alpha === 'number') h = upright ? cameraHeading(e.alpha, e.beta, e.gamma) : 360 - e.alpha; // Android
+    if (h == null) return;
+    h = (h + ((screen.orientation && screen.orientation.angle) || 0) + 360) % 360;
+    if (typeof e.beta === 'number') pitch = e.beta;
+    if (heading == null || Math.abs(((h - heading + 540) % 360) - 180) > 1.5) {
+      heading = h;
+      applyView(); guide();
+    }
+  }
+
+  let compassOn = false;
+  async function startCompass() {
+    if (compassOn) return;
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
+        if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+      }
+      compassOn = true;
+      window.addEventListener('deviceorientationabsolute', onOrientation);
+      window.addEventListener('deviceorientation', onOrientation);
+    } catch (err) { /* bez kompasu mapa też działa */ }
+  }
+
+  function stopGps() {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null; fix = null;
+    if (wake) { wake.release().catch(() => {}); wake = null; }
+    $('lgps').textContent = 'Włącz GPS';
+    $('lgps').classList.remove('on');
+    refresh();
+  }
+
+  $('lgps').addEventListener('click', () => {
+    if (watchId != null) { stopGps(); return; }
+    if (!window.isSecureContext || !navigator.geolocation) {
+      say('Przeglądarka udostępnia GPS tylko stronom otwartym przez HTTPS (albo localhost). Ta strona jest otwarta inaczej, więc pozycji nie będzie.');
+      return;
+    }
+    startCompass();
+    if (navigator.wakeLock) navigator.wakeLock.request('screen').then((w) => { wake = w; }).catch(() => {});
+    watchId = navigator.geolocation.watchPosition((p) => {
+      fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+      const last = track[track.length - 1];
+      if (!last || distance(last, fix) > 4) {
+        track.push({ lat: fix.lat, lon: fix.lon });
+        if (track.length > 5000) track.shift();
+      }
+      refresh();
+    }, (err) => {
+      say(err.code === 1 ? 'Brak zgody na lokalizację. Zezwól na nią tej stronie w ustawieniach przeglądarki.'
+        : 'GPS nie podaje pozycji (' + err.message + '). Wyjdź pod otwarte niebo i spróbuj ponownie.');
+      if (err.code === 1) stopGps();
+    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 30000 });
+    $('lgps').textContent = 'Wyłącz GPS';
+    $('lgps').classList.add('on');
+    describe();
+  });
+
+  setFollow(true);
+  describe();
+})();

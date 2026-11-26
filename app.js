@@ -1,0 +1,242 @@
+(function () {
+  'use strict';
+  const { TERRAIN, POINT_NAMES, analyze: analyzeMap, costGrid, routeLeg } = BnoCore;
+  const INK = { green: '#0a8a2a', black: '#000', brown: '#b4530a', blue: '#0b4fd6' };
+  const MAX_DIM = 1600; // rozdzielczość robocza (dłuższy bok)
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $('map');
+  const ctx = canvas.getContext('2d');
+
+  let photo = null, pixels = null, classView = null, cost = null;
+  let W = 0, H = 0, zoom = 1;
+  let points = [], legs = [];
+  let showClasses = false, busy = false;
+
+  const status = (text) => { $('status').textContent = text; };
+  const READY = 'Stuknij start, a potem kolejne punkty kontrolne.';
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Nie udało się wczytać zdjęcia'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // Rozpoznaje teren w wybranym trybie i przelicza już postawione przebiegi.
+  function analyze() {
+    const { cls, features } = analyzeMap(pixels, W, H, $('mode').value);
+    cost = costGrid(cls);
+    const out = new ImageData(W, H);
+    for (let i = 0; i < cls.length; i++) {
+      const rgb = TERRAIN[cls[i]].rgb;
+      out.data[i * 4] = rgb[0]; out.data[i * 4 + 1] = rgb[1]; out.data[i * 4 + 2] = rgb[2];
+      out.data[i * 4 + 3] = 255;
+    }
+    const vctx = classView.getContext('2d');
+    vctx.putImageData(out, 0, 0);
+    drawFeatures(vctx, features);
+    legs = [];
+    for (let i = 1; i < points.length; i++) legs.push(routeLeg(cost, W, H, points[i - 1], points[i]));
+    draw(); renderInfo();
+  }
+
+  // Rozpoznane symbole punktowe rysujemy z powrotem na widoku "co widzę".
+  function drawFeatures(g, features) {
+    for (const pass of [['#fff', 4], [null, 2]]) {
+      for (const f of features) {
+        const r = Math.max(4, f.size / 2 + 1), x = f.x + 0.5, y = f.y + 0.5;
+        g.strokeStyle = pass[0] || INK[f.color];
+        g.fillStyle = pass[0] || INK[f.color];
+        g.lineWidth = pass[1];
+        g.beginPath();
+        if (f.kind === 'x') {
+          g.moveTo(x - r, y - r); g.lineTo(x + r, y + r);
+          g.moveTo(x + r, y - r); g.lineTo(x - r, y + r);
+          g.stroke();
+        } else if (f.kind === 'ring') {
+          g.arc(x, y, r, 0, Math.PI * 2); g.stroke();
+        } else {
+          g.arc(x, y, r * 0.7 + (pass[0] ? 1 : 0), 0, Math.PI * 2); g.fill();
+        }
+      }
+    }
+  }
+
+  function runBusy(message, work) {
+    busy = true;
+    status(message);
+    setTimeout(() => {
+      try { work(); status(points.length ? 'Gotowe. Stuknij kolejny punkt albo cofnij ostatni.' : READY); }
+      catch (err) { status('Błąd: ' + err.message); }
+      busy = false;
+    }, 20);
+  }
+
+  $('file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file || busy) return;
+    status('Wczytuję zdjęcie…');
+    try {
+      const img = await loadImage(file);
+      const k = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+      W = Math.round(img.naturalWidth * k);
+      H = Math.round(img.naturalHeight * k);
+      photo = document.createElement('canvas');
+      photo.width = W; photo.height = H;
+      const pctx = photo.getContext('2d', { willReadFrequently: true });
+      pctx.drawImage(img, 0, 0, W, H);
+      URL.revokeObjectURL(img.src);
+      pixels = pctx.getImageData(0, 0, W, H).data;
+      classView = document.createElement('canvas');
+      classView.width = W; classView.height = H;
+      canvas.width = W; canvas.height = H;
+      points = [];
+      $('tools').hidden = false;
+      runBusy('Analizuję mapę…', analyze);
+    } catch (err) {
+      status(err.message);
+    }
+  });
+
+  $('mode').addEventListener('change', () => {
+    if (pixels && !busy) runBusy('Analizuję mapę…', analyze);
+  });
+
+  canvas.addEventListener('click', (e) => {
+    if (!cost || busy) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.min(W - 1, Math.max(0, Math.round((e.clientX - rect.left) * W / rect.width)));
+    const y = Math.min(H - 1, Math.max(0, Math.round((e.clientY - rect.top) * H / rect.height)));
+    points.push({ x, y });
+    draw();
+    if (points.length < 2) { status('Teraz stuknij pierwszy punkt kontrolny.'); return; }
+    runBusy('Liczę wariant…', () => {
+      legs.push(routeLeg(cost, W, H, points[points.length - 2], points[points.length - 1]));
+      draw(); renderInfo();
+    });
+  });
+
+  $('undo').addEventListener('click', () => {
+    if (busy || !points.length) return;
+    points.pop();
+    legs.length = Math.max(0, points.length - 1);
+    draw(); renderInfo();
+  });
+  $('clear').addEventListener('click', () => {
+    if (busy) return;
+    points = []; legs = [];
+    draw(); renderInfo();
+    status(READY);
+  });
+  $('toggle').addEventListener('click', () => {
+    showClasses = !showClasses;
+    $('toggle').textContent = showClasses ? 'Pokaż zdjęcie' : 'Pokaż co widzę';
+    $('legend').hidden = !showClasses;
+    draw();
+  });
+  const setZoom = (z) => {
+    zoom = Math.min(4, Math.max(1, z));
+    canvas.style.width = (zoom * 100) + '%';
+  };
+  $('zoomIn').addEventListener('click', () => setZoom(zoom * 1.5));
+  $('zoomOut').addEventListener('click', () => setZoom(zoom / 1.5));
+
+  const label = (i) => (i === 0 ? 'S' : String(i));
+
+  function stroke(color, width, dash) {
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.setLineDash(dash || []);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = width + 3; ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  function strokePath(path, color, width, dash) {
+    ctx.beginPath();
+    for (let k = 0; k < path.length; k++) {
+      const x = path[k] % W + 0.5, y = ((path[k] / W) | 0) + 0.5;
+      if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+    }
+    stroke(color, width, dash);
+  }
+
+  function draw() {
+    if (!photo) return;
+    ctx.drawImage(showClasses ? classView : photo, 0, 0);
+    const lw = Math.max(2.5, W / 320);
+    const dash = [lw * 3, lw * 2.5];
+    legs.forEach((leg, i) => {
+      if (leg.best) return;
+      ctx.beginPath(); // brak przejścia: szara przerywana prosta
+      ctx.moveTo(points[i].x, points[i].y); ctx.lineTo(points[i + 1].x, points[i + 1].y);
+      stroke('#666', lw * 0.8, dash);
+    });
+    for (const leg of legs) if (leg.alt) strokePath(leg.alt.path, '#1565c0', lw * 0.8, dash);
+    for (const leg of legs) if (leg.best) strokePath(leg.best.path, '#e53935', lw);
+    const r = Math.max(9, W / 90);
+    ctx.font = `bold ${Math.round(r * 1.4)}px sans-serif`;
+    points.forEach((p, i) => {
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = lw + 2; ctx.stroke();
+      ctx.strokeStyle = '#a000c8'; ctx.lineWidth = lw; ctx.stroke();
+      ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.fillStyle = '#a000c8';
+      ctx.strokeText(label(i), p.x + r + 2, p.y - r);
+      ctx.fillText(label(i), p.x + r + 2, p.y - r);
+    });
+  }
+
+  function legText(leg) {
+    if (!leg.best) {
+      return 'brak przejścia – punkt jest odcięty terenem nie do przejścia. Włącz „Pokaż co widzę” i sprawdź, co blokuje.';
+    }
+    const extra = Math.round((leg.best.length / leg.straight.length - 1) * 100);
+    let text;
+    if (leg.straight.cost === Infinity) {
+      text = `prosta przecina teren nie do przejścia; obejście (czerwone) jest o ${extra}% dłuższe od prostej.`;
+    } else {
+      const gain = Math.round((1 - leg.best.cost / leg.straight.cost) * 100);
+      text = gain < 3
+        ? 'biegnij praktycznie na wprost.'
+        : `najlepszy wariant (czerwony) jest o ${extra}% dłuższy od prostej, ale ok. ${gain}% szybszy.`;
+    }
+    if (leg.alt) {
+      const slower = Math.round((leg.alt.cost / leg.best.cost - 1) * 100);
+      text += ` Alternatywa (niebieska przerywana): ${slower}% wolniejsza.`;
+    }
+    return text;
+  }
+
+  function renderInfo() {
+    const box = $('info');
+    box.innerHTML = '';
+    legs.forEach((leg, i) => {
+      const p = document.createElement('p');
+      const b = document.createElement('b');
+      b.textContent = `${label(i)} → ${label(i + 1)}: `;
+      p.append(b, legText(leg));
+      box.append(p);
+    });
+  }
+
+  TERRAIN.filter((t) => !t.internal).forEach((t) => {
+    const item = document.createElement('span');
+    const sw = document.createElement('i');
+    sw.style.background = `rgb(${t.rgb.join(',')})`;
+    item.append(sw, t.cost === Infinity ? `${t.name} – nie do przejścia` : `${t.name} ×${t.cost}`);
+    $('legend').append(item);
+  });
+  const GLYPH = { x: '×', ring: '○', dot: '●' };
+  for (const color of Object.keys(POINT_NAMES)) {
+    for (const kind of Object.keys(POINT_NAMES[color])) {
+      const item = document.createElement('span');
+      const g = document.createElement('b');
+      g.textContent = GLYPH[kind] + ' ';
+      g.style.color = INK[color];
+      item.append(g, POINT_NAMES[color][kind]);
+      $('legend').append(item);
+    }
+  }
+})();
