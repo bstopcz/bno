@@ -239,7 +239,7 @@ if (typeof document !== 'undefined') {
   // tabele symboli: najważniejsze numery w czterech zestawach (wg specyfikacji IOF)
   const k = (set, num, type, name, lw) => BnoSymbols.kindOf(set, { num: Math.round(num * 1000), type, name: name || '', lineWidth: lw || 0 });
   const expect = [
-    ['isom2017', 402, 3, 'open'], ['isom2017', 403, 3, 'rough'], ['isom2017', 409, 3, 'under2'], ['isom2017', 201, 2, 'cliff'], ['isom2017', 202, 2, 'bank'],
+    ['isom2017', 402, 3, 'open'], ['isom2017', 403, 3, 'rough'], ['isom2017', 409, 3, 'under2'], ['isom2017', 201, 2, 'cliff'], ['isom2017', 202, 2, 'cliff'], ['isom2000', 203, 2, 'cliff'], ['issprom2019', 202, 2, 'bank'], ['issom2007', 203, 2, 'bank'],
     ['isom2017', 301, 3, 'lake'], ['isom2017', 304, 2, 'stream'], ['isom2017', 307, 3, 'lake'], ['isom2017', 505, 2, 'footpath'], ['isom2017', 507, 2, 'faintpath'],
     ['isom2017', 516, 2, 'fence'], ['isom2017', 518, 2, 'wall'], ['isom2017', 519, 1, 'crossing'], ['isom2017', 520, 3, 'forbidden'], ['isom2017', 521, 3, 'building'],
     ['isom2017', 601, 2, 'ignore'], ['isom2017', 208, 3, 'ignore'], ['isom2017', 709, 3, 'oob'], ['isom2017', 532, 2, 'footpath'],

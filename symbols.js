@@ -48,7 +48,8 @@
   const ISOM2017 = {
     101: 'contour', 102: 'contour', 103: 'ignore', 104: 'bank', 105: 'lowobst', 106: 'ignore', 107: 'bank', 108: 'lowobst',
     113: 'ignore', 114: 'stony',
-    201: 'cliff', 202: 'bank', 206: 'rockarea', 208: 'ignore', 209: 'stony', 210: 'under1', 211: 'boulders', 212: 'stonyfight',
+    // 202 (ściana skalna) wg specyfikacji jest do przejścia, ale w lesie traktujemy ją jak 201: nie do przejścia
+    201: 'cliff', 202: 'cliff', 206: 'rockarea', 208: 'ignore', 209: 'stony', 210: 'under1', 211: 'boulders', 212: 'stonyfight',
     213: 'sand', 214: 'barerock', 215: 'bank',
     301: WATERX, 302: 'shallow', 304: 'stream', 305: 'ditch', 306: 'ignore', 307: WATERX, 308: 'marsh', 309: 'marshline', 310: 'softmarsh',
     401: 'open', 402: 'open', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
@@ -60,12 +61,12 @@
   };
   // ISSprOM 2019-2 (sprint): ta sama numeracja, inne znaczenie kilku symboli
   const ISSPROM2019 = Object.assign({}, ISOM2017, {
-    208: 'stony', 210: 'stony', 533: 'under1',
+    202: 'bank', 208: 'stony', 210: 'stony', 533: 'under1', // w sprincie 202 to niska ścianka do przejścia
   });
   // ISOM 2000 (las, dawna numeracja)
   const ISOM2000 = {
     101: 'contour', 102: 'contour', 103: 'ignore', 106: 'bank', 107: 'lowobst', 108: 'lowobst', 109: 'bank', 110: 'lowobst',
-    201: 'cliff', 202: 'rockarea', 203: 'bank', 208: 'stony', 210: 'stony', 211: 'sand', 212: 'barerock',
+    201: 'cliff', 202: 'rockarea', 203: 'cliff', 208: 'stony', 210: 'stony', 211: 'sand', 212: 'barerock', // 203: ściana skalna, w lesie nie do przejścia
     301: WATERX, 302: 'lake', 304: WATERX, 305: 'stream', 306: 'ditch', 307: 'ignore', 308: 'marshline', 309: WATERX, 310: 'marsh', 311: 'softmarsh',
     401: 'open', 402: 'open', 403: 'rough', 404: 'rough', 405: 'forest', 406: 'slow', 407: 'under1', 408: 'walk', 409: 'under2', 410: 'fight',
     411: 'slow', 412: 'cult', 413: 'cult', 415: 'cult',
