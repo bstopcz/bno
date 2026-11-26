@@ -3,6 +3,7 @@
   const { TERRAIN, POINT_NAMES, analyze: analyzeMap, costGrid, routeLeg } = BnoCore;
   const INK = { green: '#0a8a2a', black: '#000', brown: '#b4530a', blue: '#0b4fd6' };
   const MAX_DIM = 1600;
+  const HI_DIM = 2600; // rozdzielczość do oceny kształtu czarnych linii
   const CONTOUR_RGB = [176, 84, 10]; // rozdzielczość robocza (dłuższy bok)
 
   const $ = (id) => document.getElementById(id);
@@ -10,6 +11,7 @@
   const ctx = canvas.getContext('2d');
 
   let photo = null, pixels = null, classView = null, cost = null, contour = null;
+  let srcImg = null, hiPixels = null; // oryginalny obraz i jego większa wersja do analizy linii
   let natW = 0; // szerokość oryginalnego pliku w pikselach (do przeliczenia skali)
   let W = 0, H = 0, zoom = 1;
   let points = [], legs = [];
@@ -29,7 +31,18 @@
 
   // Rozpoznaje teren w wybranym trybie i przelicza już postawione przebiegi.
   function analyze() {
-    const res = analyzeMap(pixels, W, H, $('mode').value);
+    if (hiPixels === undefined) {
+      hiPixels = null;
+      const kh = Math.min(1, HI_DIM / Math.max(srcImg.naturalWidth, srcImg.naturalHeight));
+      if (srcImg.naturalWidth * kh > W * 1.2) {
+        const ch = document.createElement('canvas');
+        ch.width = Math.round(srcImg.naturalWidth * kh); ch.height = Math.round(srcImg.naturalHeight * kh);
+        const gh = ch.getContext('2d', { willReadFrequently: true });
+        gh.drawImage(srcImg, 0, 0, ch.width, ch.height);
+        hiPixels = { data: gh.getImageData(0, 0, ch.width, ch.height).data, w: ch.width, h: ch.height };
+      }
+    }
+    const res = analyzeMap(pixels, W, H, $('mode').value, hiPixels);
     const cls = res.cls, features = res.features;
     contour = res.contour;
     cost = costGrid(cls);
@@ -134,6 +147,7 @@
       if (dpi >= 100 && dpi <= 1200) $('dpi').value = Math.round(dpi); // 72/96 to zwykle wartość domyślna, nie prawdziwa
       const img = await loadImage(file);
       natW = img.naturalWidth;
+      srcImg = img; hiPixels = undefined;
       const k = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
       W = Math.round(img.naturalWidth * k);
       H = Math.round(img.naturalHeight * k);

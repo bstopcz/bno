@@ -2,11 +2,12 @@
 // Działa w przeglądarce (globalny obiekt BnoCore) i w Node (module.exports).
 (function (root) {
   'use strict';
+  const Lines = typeof module !== 'undefined' && module.exports ? require('./lines.js') : root.BnoLines;
 
   const T = {
     FOREST: 0, OPEN: 1, PATH: 2, PAVED: 3, GREEN1: 4, GREEN2: 5, GREEN3: 6,
     WATER: 7, FORBIDDEN: 8, BUILDING: 9, OVERLAY: 10, PURPLE: 11,
-    LAKE: 12, OOB: 13, WALL: 14, IMPVEG: 15, BROWN: 16,
+    LAKE: 12, OOB: 13, WALL: 14, IMPVEG: 15, BROWN: 16, FENCE: 17,
   };
   const X = Infinity; // nie do przejścia
 
@@ -26,9 +27,10 @@
     { name: 'fiolet', cost: 1.6, rgb: [200, 60, 200], internal: true },
     { name: 'woda nie do przejścia', cost: X, rgb: [20, 70, 180] },
     { name: 'teren wyłączony (fioletowa kratka)', cost: X, rgb: [230, 0, 150] },
-    { name: 'mur / płot (sprint)', cost: X, rgb: [150, 0, 0] },
+    { name: 'mur / płot nie do przejścia', cost: X, rgb: [150, 0, 0] },
     { name: 'zieleń nie do przejścia (sprint)', cost: X, rgb: [0, 90, 30] },
     { name: 'brąz', cost: 1.6, rgb: [200, 110, 40], internal: true },
+    { name: 'płot / murek do przejścia', cost: 12, rgb: [240, 120, 0] },
   ];
 
   // Symbole punktowe rozpoznawane po kolorze i kształcie.
@@ -265,7 +267,7 @@
         if (nx < 0 || ny < 0 || nx >= w || ny >= h) return 0;
         const c = cls[ny * w + nx];
         if (isOver(c)) continue;
-        return c === T.PATH || c === T.WALL ? c : 0;
+        return c === T.PATH || c === T.WALL || c === T.FENCE ? c : 0;
       }
       return 0;
     };
@@ -290,7 +292,7 @@
     const queue = new Int32Array(n);
     let head = 0, tail = 0;
     for (let i = 0; i < n; i++) {
-      if (cls[i] !== T.OVERLAY && cls[i] !== T.PATH && cls[i] !== T.WALL) queue[tail++] = i;
+      if (cls[i] !== T.OVERLAY && cls[i] !== T.PATH && cls[i] !== T.WALL && cls[i] !== T.FENCE) queue[tail++] = i;
     }
     while (head < tail) {
       const i = queue[head++];
@@ -308,7 +310,7 @@
   // Ścieżki i drogi zostają: most przez rzekę czy przejście między płotami dalej działa.
   function sealSlivers(cls, w, h, k) {
     const hard = (c) => TERRAIN[c].cost === Infinity && c !== T.WALL;
-    const keep = (c) => c === T.PATH || c === T.PAVED || c === T.WALL;
+    const keep = (c) => c === T.PATH || c === T.PAVED || c === T.WALL || c === T.FENCE;
     const scan = (x, y, dx, dy) => {
       for (let s = 1; s <= k; s++) {
         const nx = x + dx * s, ny = y + dy * s;
@@ -448,7 +450,8 @@
   }
 
   // Zwraca { cls: klasy terenu, features: symbole punktowe, contour: maska warstwic }.
-  function analyze(data, w, h, mode) {
+  // hi (opcjonalnie): ten sam obraz w większej rozdzielczości { data, w, h }, używany tylko do oceny kształtu linii.
+  function analyze(data, w, h, mode, hi) {
     const sprint = mode === 'sprint';
     const n = w * h;
     const cls = new Uint8Array(n);
@@ -490,15 +493,41 @@
 
     // gruba czarna/szara plama = budynek; cienka linia = ścieżka (las) albo mur/płot (sprint)
     const thickDark = opening(maskOf(T.PATH), w, h, Math.max(2, Math.round(r / 2)));
-    for (let i = 0; i < n; i++) {
-      if (thickDark[i]) cls[i] = T.BUILDING;
-      else if (sprint && cls[i] === T.PATH) cls[i] = T.WALL;
-    }
+    for (let i = 0; i < n; i++) if (thickDark[i]) cls[i] = T.BUILDING;
 
     // gęsty czarny szraf = teren zakazany (stare mapy), a nie pęk ścieżek
     const hatch = denseAreas(maskOf(T.PATH), w, h, P, 0.22);
+    // kształt czarnych linii: ścieżka, płot do przejścia, mur / płot nie do przejścia albo linia bez znaczenia.
+    // Szraf policzony wyżej musi być wcześniej, bo jego paski to dla tej analizy "cienkie linie bez znaczenia".
+    const lab = hi && hi.w > w * 1.2
+      ? Lines.pool(Lines.classifyLines(Lines.darkMask(hi.data, hi.w, hi.h), hi.w, hi.h, sprint), hi.w, hi.h, w, h)
+      : Lines.classifyLines(maskOf(T.PATH), w, h, sprint);
+    // linie północy usuwamy przed etykietami i pilnujemy, żeby etykiety ich nie przywróciły
+    let northI = null;
+    if (!sprint) {
+      const before = new Uint8Array(cls);
+      removeNorthLines(cls, w, h);
+      const gone = new Uint8Array(n);
+      for (let i = 0; i < n; i++) gone[i] = before[i] === T.PATH && cls[i] !== T.PATH ? 1 : 0;
+      northI = integral(gone, w, h);
+    }
+    // na mapie leśnej czarna linia przy beżowym pasie to obwódka drogi, a nie płot: zostaje częścią drogi
+    const roadI = sprint ? null : integral(opening(maskOf(T.PAVED), w, h, 1), w, h);
+    for (let i = 0; i < n; i++) {
+      if (cls[i] === T.BUILDING) continue;
+      if (!sprint) {
+        if (boxSum(northI, w, h, i % w, (i / w) | 0, 2) > 0) { if (cls[i] === T.PATH) cls[i] = T.OVERLAY; continue; }
+        if (cls[i] === T.PAVED) continue;
+        if ((lab[i] || cls[i] === T.PATH) && boxSum(roadI, w, h, i % w, (i / w) | 0, 1) > 0) { cls[i] = T.PAVED; continue; }
+      }
+      const l = lab[i];
+      if (l === Lines.WALL) cls[i] = T.WALL;
+      else if (l === Lines.FENCE) cls[i] = T.FENCE;
+      else if (l === Lines.PATH) cls[i] = T.PATH;
+      else if (l === Lines.NEUTRAL) { if (cls[i] === T.PATH) cls[i] = T.OVERLAY; }
+      else if (sprint && cls[i] === T.PATH) cls[i] = T.WALL; // nierozpoznane czarne w sprincie: ostrożnie, jak mur
+    }
     for (let i = 0; i < n; i++) if (hatch[i] && cls[i] !== T.BUILDING && cls[i] !== T.PAVED) cls[i] = T.FORBIDDEN;
-    if (!sprint) removeNorthLines(cls, w, h);
 
     // żółte / beżowe paseczki szerokości 1 px to rozmyte krawędzie warstwic, a nie teren
     for (const t of [T.OPEN, T.PAVED]) {

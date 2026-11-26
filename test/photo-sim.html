@@ -112,6 +112,11 @@
   #lararrow polygon { fill: #e53935; stroke: #fff; stroke-width: 4; stroke-linejoin: round; }
   #larpin { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
             border: 5px solid #a000c8; background: rgba(255,255,255,0.35); box-shadow: 0 0 0 2px #fff; }
+  #lfull { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+           pointer-events: auto; background: rgba(4,19,10,0.78); border-color: var(--accent); }
+  #lstage.full { position: fixed; inset: 0; z-index: 100; height: auto; min-height: 0; border: 0; border-radius: 0; }
+  #lstage.full #lartext { top: calc(10px + env(safe-area-inset-top, 0px)); }
+  #lstage.full #lmini { top: calc(74px + env(safe-area-inset-top, 0px)); }
   #lpanel { padding: 14px; margin-bottom: 12px; border: 1px solid var(--accent); border-radius: 12px; background: var(--surface); }
   #lpanel p { margin: 0 0 10px; }
   #lpanel .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -242,6 +247,7 @@
       <div id="lartext"></div>
       <div id="larpin" hidden></div>
       <div id="lmini" hidden></div>
+      <button id="lfull">Pełny ekran</button>
       <div id="lararrow" hidden><svg viewBox="0 0 100 100"><polygon points="50,4 88,58 64,58 64,96 36,96 36,58 12,58"/></svg></div>
     </div>
   </div>
@@ -261,8 +267,10 @@
           metr w górę liczy się jak 6 m po płaskim w tym samym terenie. Przy wariantach widać liczbę przeciętych warstwic.</li>
       <li>Jeśli są dwa sensowne warianty, pod statusem pojawią się przyciski „Wariant A / B”. Wybrany jest czerwony,
           drugi niebieski przerywany; strzałka prowadzi po wybranym.</li>
-      <li>„Kamera”: trzymaj telefon pionowo przed sobą. W rogu masz minimapę z Twoją pozycją, obróconą zgodnie z kierunkiem patrzenia. Strzałka pokazuje, w którą stronę biec po tej trasie,
-          a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy.</li>
+      <li>„Kamera”: trzymaj telefon pionowo przed sobą. W rogu masz minimapę z Twoją pozycją, obróconą zgodnie z kierunkiem patrzenia. Strzałka pokazuje kierunek trasy w miejscu, w którym jesteś
+          (a gdy odejdziesz od niej o ponad 15 m, prowadzi z powrotem na linię, omijając teren nie do przejścia),
+          a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy. Przycisk „Pełny ekran” w rogu
+          obrazu rozciąga kamerę na cały ekran telefonu.</li>
     </ol>
     <p>Kalibracja zapisuje się w tej przeglądarce dla danego pliku mapy.</p>
   </details>
@@ -368,8 +376,21 @@
 
   <h2>Rodzaj mapy</h2>
   <ul>
-    <li><b>Leśna:</b> cienka czarna linia to ścieżka (×1), gruba czarna plama to budynek.</li>
-    <li><b>Sprint:</b> każda czarna linia to mur lub płot nie do przejścia, a ciemna zieleń jest zakazana.</li>
+    <li><b>Leśna:</b> ciemna zieleń jest tylko bardzo wolna, a czarne linie ocenia się jak niżej.</li>
+    <li><b>Sprint:</b> ciemna zieleń jest zakazana, a o czarnych liniach decyduje głównie grubość.</li>
+  </ul>
+
+  <h2>Czarne linie</h2>
+  <p class="lead">Silnik ogląda kształt każdej czarnej linii w powiększeniu i porównuje jej grubość z innymi liniami na tej samej mapie.</p>
+  <ul>
+    <li><b>Krótkie kreski w rzędzie</b> (linia przerywana): ścieżka.</li>
+    <li><b>Ciągła gruba linia</b> bez znaczków: na mapie leśnej droga, w sprincie mur nie do przejścia.</li>
+    <li><b>Ciągła cienka linia</b> bez znaczków: bez wpływu na bieg (granica, przecinka, krawędź, linia północy).</li>
+    <li><b>Linia z kreseczkami albo kropkami z boku</b>: płot lub mur. Pojedyncze znaczki na cienkiej linii to przeszkoda
+        do przejścia (liczona jak kilkanaście metrów biegu), podwójne znaczki albo gruba linia to przeszkoda nie do przejścia.</li>
+    <li><b>Poprzeczki przecinające linię</b> (słupy linii energetycznej, tory): nie są traktowane jak płot.</li>
+    <li>Jeśli wszystkie linie na mapie mają tę samą grubość, silnik nie ma jak odróżnić cienkich od grubych: na mapie leśnej
+        uznaje je wtedy za ścieżki, a w sprincie za mury.</li>
   </ul>
 
   <h2>Drugi wariant</h2>
@@ -380,7 +401,8 @@
 
   <h2>Czego silnik nie wie</h2>
   <ul>
-    <li>Czy czarna linia na mapie leśnej to ścieżka, skała, płot czy linia energetyczna. Wszystkie traktuje jak ścieżkę.</li>
+    <li>Czy gruba ciągła linia na mapie leśnej to droga, czy skała bez „zębów”. Traktuje ją jak drogę.</li>
+    <li>Co oznaczają linie na obrazie o małej rozdzielczości: kreseczki płotu muszą mieć co najmniej 2–3 piksele, żeby je zobaczył.</li>
     <li>Jaka jest jakość ścieżki: droga, dukt i ledwie widoczna ścieżka mają ten sam mnożnik.</li>
     <li>Jakie jest podłoże, pora roku i Twoja forma. Mnożniki są stałe i takie same dla każdego.</li>
     <li>Że pod górę w gęstym biegnie się jeszcze wolniej, niż wynika z samego mnożenia.</li>
@@ -406,6 +428,7 @@
   })();
 </script>
 <script src="../geo.js"></script>
+<script src="../lines.js"></script>
 <script src="../core.js"></script>
 <script src="../info.js"></script>
 <script src="../live.js"></script>
@@ -421,7 +444,7 @@ window.onerror = (m) => { document.title = 'FAIL ' + m; };
   const blob = await (await fetch('../przyklad-mapa.png')).blob();
   const dt = new DataTransfer(); dt.items.add(new File([blob], 'przyklad-mapa.png', { type: 'image/png' }));
   $('file').files = dt.files; $('file').dispatchEvent(new Event('change'));
-  await wait(4000);
+  await wait(15000); // analiza z oceną kształtu linii trwa dłużej
   const c = $('map'), tap = (x, y) => { // współrzędne w pikselach analizy (1600 px szerokości)
     const r = c.getBoundingClientRect();
     c.dispatchEvent(new MouseEvent('click', { clientX: r.left + x * r.width / c.width, clientY: r.top + y * r.height / c.height, bubbles: true }));

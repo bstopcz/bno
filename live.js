@@ -5,6 +5,7 @@
   const { analyze, costGrid, routeLeg, CLIMB_FACTOR } = BnoCore;
   const $ = (id) => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
+  const HI_DIM = 2600;     // rozdzielczość, w której oceniany jest kształt czarnych linii (płot czy ścieżka)
   const PROC_DIM = 1600;   // rozdzielczość, w której liczona jest trasa
   const TANGENT_M = 9;     // kierunek trasy liczony z tylu metrów linii przed Tobą
   const RETURN_M = 15;     // dalej od linii niż tyle metrów: strzałka prowadzi z powrotem na trasę
@@ -369,7 +370,16 @@
     c.width = w; c.height = h;
     const g = c.getContext('2d', { willReadFrequently: true });
     g.drawImage(img, 0, 0, w, h);
-    const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value);
+    let hi = null;
+    const kh = Math.min(1, HI_DIM / Math.max(W, H));
+    if (kh > k * 1.2) {
+      const ch = document.createElement('canvas');
+      ch.width = Math.round(W * kh); ch.height = Math.round(H * kh);
+      const gh = ch.getContext('2d', { willReadFrequently: true });
+      gh.drawImage(img, 0, 0, ch.width, ch.height);
+      hi = { data: gh.getImageData(0, 0, ch.width, ch.height).data, w: ch.width, h: ch.height };
+    }
+    const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value, hi);
     proc = { k, w, h, cost: costGrid(res.cls), contour: res.contour };
   }
 

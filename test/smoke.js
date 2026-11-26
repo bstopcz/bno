@@ -145,6 +145,29 @@ print('OK', {
   print('OK zieleń');
 }
 
+// --- kształt czarnych linii: droga, cienka linia, płot, wysoki płot, mur z kropkami, linia energetyczna, ścieżka ---
+{
+  const L = typeof require !== 'undefined' ? require('../lines.js') : BnoLines;
+  const LW = 500, LH = 320, m = new Uint8Array(LW * LH);
+  const box = (x0, y0, x1, y1) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) m[y * LW + x] = 1; };
+  box(20, 28, 480, 33);                                            // droga: gruba, ciągła
+  box(20, 70, 480, 72);                                            // cienka ciągła linia bez znaczków
+  box(20, 110, 480, 112); for (let x = 40; x < 470; x += 30) box(x, 103, x + 2, 110);            // płot: pojedyncze kreseczki
+  box(20, 160, 480, 162); for (let x = 40; x < 460; x += 40) { box(x, 153, x + 2, 160); box(x + 6, 153, x + 8, 160); } // wysoki płot
+  box(20, 210, 480, 212); for (let x = 40; x < 470; x += 30) box(x, 207, x + 7, 215);            // mur: kropki na linii
+  box(20, 250, 480, 252); for (let x = 100; x < 470; x += 150) box(x, 243, x + 2, 260);          // linia energetyczna: poprzeczki
+  for (let x = 20; x < 470; x += 17) box(x, 290, x + 12, 293);                                   // ścieżka: kreski
+  const names = ['brak', 'neutralna', 'ścieżka', 'płot', 'mur'];
+  const check = (sprint, want) => {
+    const lab = L.classifyLines(m, LW, LH, sprint);
+    const got = [[250, 30], [250, 71], [250, 111], [255, 161], [265, 211], [200, 251], [59, 291]].map(([x, y]) => names[lab[y * LW + x]]);
+    assert.strictEqual(got.join(', '), want, (sprint ? 'sprint' : 'las'));
+  };
+  check(false, 'ścieżka, neutralna, płot, mur, płot, neutralna, ścieżka');
+  check(true, 'mur, neutralna, płot, mur, płot, neutralna, neutralna');
+  print('OK linie');
+}
+
 // --- przewyższenia: trzy warstwice w poprzek przebiegu, obejście bokiem jest dłuższe, ale płaskie ---
 {
   rect(0, 0, W, H, [250, 250, 248]);

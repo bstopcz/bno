@@ -1,1 +1,5 @@
 przyklad-mapa.png
+# pliki zrodlowe map (PDF, OCAD) nigdy nie trafiaja na strone
+*.pdf
+*.ocd
+treningi/mapytrening/
