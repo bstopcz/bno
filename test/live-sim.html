@@ -416,6 +416,7 @@ window.onerror = (m) => { document.title = 'FAIL ' + m; };
 (async () => {
   const $ = (id) => document.getElementById(id);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  $('tabbtn-live').click(); // strona startuje teraz na zakładce Treningi
   // mapa testowa: zakładamy, że góra = północ, 1 px = 1 m, lewy górny róg = (52.21, 21.00)
   const mLat = 1 / 111195, mLon = mLat / Math.cos(52.21 * Math.PI / 180);
   const ll = (x, y) => ({ lat: 52.21 - y * mLat, lon: 21.0 + x * mLon });
