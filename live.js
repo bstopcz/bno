@@ -185,6 +185,29 @@
   // ---------- para: plik OCAD + PDF tej samej mapy ----------
   // Wyświetlamy PDF, a teren, skalę i położenie na świecie bierzemy z OCAD-a. PDF jest dopasowywany automatycznie.
   let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
+  let gridCtx = null; // gotowa siatka terenu treningu: { w, h, cls, contour }
+
+  // Siatka terenu zapisana jako PNG (czerwony = kategoria, zielony = warstwica), przygotowana przez admina.
+  function loadGrid(url) {
+    const gi = new Image();
+    gi.onload = () => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = gi.naturalWidth; c.height = gi.naturalHeight;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(gi, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data, n = c.width * c.height;
+        const cls = new Uint8Array(n), contour = new Uint8Array(n), max = BnoCore.TERRAIN.length;
+        for (let i = 0; i < n; i++) { const v = d[i * 4]; cls[i] = v < max ? v : 0; contour[i] = d[i * 4 + 1] > 127 ? 1 : 0; }
+        gridCtx = { w: c.width, h: c.height, cls, contour };
+        proc = null;
+        $('lmode').hidden = true; // rodzaj mapy jest już "wliczony" w siatkę
+        ocadNote = 'Teren tego treningu jest przygotowany z góry.';
+        refresh();
+      } catch (err) { /* zostaje analiza obrazu w telefonie */ }
+    };
+    gi.src = url;
+  }
   async function openPair(ocdFile, imgFile, worldFile) {
     try {
       let map = null, world = null;
@@ -277,7 +300,8 @@
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
       mapImage = opts.image || null;
-      ocadCtx = null; ocadNote = '';
+      ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
+      if (opts.grid) loadGrid(opts.grid);
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -302,32 +326,71 @@
   window.BnoLive = {
     openTraining(t) {
       say('Pobieram mapę treningu…');
-      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie });
+      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka });
     },
   };
 
   // Dla admina: dane skalibrowanej mapy w formacie wpisu do treningi/treningi.json.
-  $('ladmin').addEventListener('click', () => {
-    const out = $('ladminout');
+  // Dla admina: komplet plików treningu. Uczestnik dostaje gotowe: obraz do wyświetlenia, siatkę terenu
+  // (policzoną tu, z pliku OCAD albo z obrazu) i kalibrację. Jego telefon niczego już nie analizuje.
+  const EXPORT_DIM = 4000; // dłuższy bok publikowanego obrazu mapy
+  const toBlob = (canvas, type, q) => new Promise((resolve) => canvas.toBlob(resolve, type, q));
+  let exportUrls = [];
+  $('ladmin').addEventListener('click', async () => {
+    const out = $('ladminout'), files = $('ladminfiles');
     out.hidden = false;
-    const link = $('ladminimg');
-    link.hidden = !mapImage;
-    if (mapImage) { link.href = mapImage; link.download = mapName; link.textContent = 'Pobierz obraz mapy (' + mapName + ')'; }
-    if (!cal) { out.value = 'Najpierw wczytaj mapę i dodaj co najmniej 2 punkty kalibracji.'; return; }
-    const r = (v, k) => Math.round(v * k) / k;
-    out.value = JSON.stringify({
-      id: mapName.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-      nazwa: 'NAZWA TRENINGU',
-      opis: 'Krótki opis: długość, trudność, do kiedy wiszą punkty.',
-      miejsce: 'Gdzie to jest i jak dojechać: parking, przystanek, miejsce startu.',
-      dojazd: { lat: r(pairs[0].lat, 1e5), lon: r(pairs[0].lon, 1e5) },
-      plik: 'treningi/' + mapName,
-      skala: 10000,
-      rodzaj: $('lmode').value,
-      ciecie: parseFloat($('lcontour').value),
-      kalibracja: pairs.map((p) => ({ lat: r(p.lat, 1e6), lon: r(p.lon, 1e6), px: r(p.px, 10), py: r(p.py, 10) })),
-    }, null, 2);
-    out.select();
+    files.replaceChildren();
+    if (!cal) { out.value = 'Najpierw wczytaj mapę: z plikiem OCAD (kalibracja zrobi się sama) albo dodaj co najmniej 2 punkty kalibracji.'; return; }
+    out.value = 'Przygotowuję pliki treningu…';
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    try {
+      ensureProc();
+      for (const u of exportUrls) URL.revokeObjectURL(u);
+      exportUrls = [];
+      const id = mapName.replace(/\.[^.]+$/, '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mapa';
+      // 1. obraz mapy jako JPG
+      const es = Math.min(1, EXPORT_DIM / Math.max(W, H));
+      const ic = document.createElement('canvas');
+      ic.width = Math.round(W * es); ic.height = Math.round(H * es);
+      const ig = ic.getContext('2d');
+      ig.fillStyle = '#fff'; ig.fillRect(0, 0, ic.width, ic.height);
+      ig.drawImage(img, 0, 0, ic.width, ic.height);
+      // 2. siatka terenu jako PNG: kanał czerwony = kategoria terenu, zielony = warstwica
+      const gc = document.createElement('canvas');
+      gc.width = proc.w; gc.height = proc.h;
+      const data = new ImageData(proc.w, proc.h);
+      for (let i = 0; i < proc.cls.length; i++) { data.data[i * 4] = proc.cls[i]; data.data[i * 4 + 1] = proc.contour[i] ? 255 : 0; data.data[i * 4 + 3] = 255; }
+      gc.getContext('2d').putImageData(data, 0, 0);
+      const parts = [[await toBlob(ic, 'image/jpeg', 0.88), id + '.jpg', 'obraz mapy'], [await toBlob(gc, 'image/png'), id + '.siatka.png', 'siatka terenu']];
+      for (const [blob, name, label] of parts) {
+        if (!blob) throw new Error('przeglądarka nie zapisała pliku (za mało pamięci?)');
+        const url = URL.createObjectURL(blob);
+        exportUrls.push(url);
+        const link = document.createElement('a');
+        link.href = url; link.download = name; link.className = 'maplink';
+        link.textContent = `Pobierz: ${name} (${label}, ${Math.round(blob.size / 1024)} kB)`;
+        files.append(link);
+      }
+      const r = (v, k) => Math.round(v * k) / k;
+      const mid = pairs.reduce((acc, q) => ({ lat: acc.lat + q.lat / pairs.length, lon: acc.lon + q.lon / pairs.length }), { lat: 0, lon: 0 });
+      out.value = JSON.stringify({
+        id,
+        nazwa: 'NAZWA TRENINGU',
+        opis: 'Krótki opis: długość, trudność, do kiedy wiszą punkty.',
+        miejsce: 'Gdzie to jest i jak dojechać: parking, przystanek, miejsce startu.',
+        dojazd: { lat: r(mid.lat, 1e5), lon: r(mid.lon, 1e5) },
+        plik: 'treningi/' + id + '.jpg',
+        siatka: 'treningi/' + id + '.siatka.png',
+        skala: ocadCtx ? Math.round(ocadCtx.map.geo.scale) : undefined,
+        rodzaj: ocadCtx ? (ocadCtx.map.geo.scale <= 5000 ? 'sprint' : 'forest') : $('lmode').value,
+        ciecie: parseFloat($('lcontour').value),
+        zrodlo: ocadCtx ? 'OCAD' : 'obraz',
+        kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
+      }, null, 2);
+      out.select();
+    } catch (err) {
+      out.value = 'Nie udało się przygotować plików: ' + err.message;
+    }
   });
 
   function savePairs() {
@@ -474,9 +537,13 @@
   // ---------- trasa do celu ----------
   function ensureProc() {
     if (proc) return;
+    if (gridCtx) { // trening z gotową siatką terenu: nic nie trzeba liczyć
+      proc = { k: gridCtx.w / W, w: gridCtx.w, h: gridCtx.h, cls: gridCtx.cls, cost: costGrid(gridCtx.cls), contour: gridCtx.contour };
+      return;
+    }
     if (ocadCtx) { // teren prosto z symboli OCAD-a, na siatce pokrywającej dokładnie wyświetlany obraz
       const grid = BnoSymbols.build(ocadCtx.map, PROC_DIM, symOverrides(ocadCtx.setId), ocadCtx.setId, ocadCtx.region);
-      proc = { k: grid.w / W, w: grid.w, h: grid.h, cost: costGrid(grid.cls), contour: grid.contour };
+      proc = { k: grid.w / W, w: grid.w, h: grid.h, cls: grid.cls, cost: costGrid(grid.cls), contour: grid.contour };
       return;
     }
     const k = Math.min(1, PROC_DIM / Math.max(W, H));
@@ -495,7 +562,7 @@
       hi = { data: gh.getImageData(0, 0, ch.width, ch.height).data, w: ch.width, h: ch.height };
     }
     const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value, hi);
-    proc = { k, w, h, cost: costGrid(res.cls), contour: res.contour };
+    proc = { k, w, h, cls: res.cls, cost: costGrid(res.cls), contour: res.contour };
   }
 
   function toRoute(part) {

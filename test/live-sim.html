@@ -117,6 +117,7 @@
   #lstage.full { position: fixed; inset: 0; z-index: 100; height: auto; min-height: 0; border: 0; border-radius: 0; }
   #lstage.full #lartext { top: calc(10px + env(safe-area-inset-top, 0px)); }
   #lstage.full #lmini { top: calc(74px + env(safe-area-inset-top, 0px)); }
+  #ladminfiles { display: grid; gap: 6px; margin-bottom: 12px; }
   #lpanel { padding: 14px; margin-bottom: 12px; border: 1px solid var(--accent); border-radius: 12px; background: var(--surface); }
   #lpanel p { margin: 0 0 10px; }
   #lpanel .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -299,9 +300,12 @@
     <p>Wczytaj mapę, dodaj punkty kalibracji (najlepiej 3–4, ze współrzędnych z Map Google), ustaw rodzaj mapy
        i cięcie warstwicowe, a potem kliknij przycisk. Dostaniesz gotowy wpis do pliku
        <code>treningi/treningi.json</code>; uzupełnij w nim nazwę, opis i dojazd. Plik mapy trafia do folderu <code>treningi</code>.</p>
-    <p>Jeśli mapa była wczytana z PDF-a, pobierz też jej obraz przyciskiem poniżej i to ten plik PNG wrzuć do folderu
-       <code>treningi</code> (kalibracja odnosi się do pikseli tego obrazu, a PDF zostaje u Ciebie).</p>
-    <p><button id="ladmin">Pokaż dane tej mapy</button> <a id="ladminimg" class="maplink" hidden></a></p>
+    <p>Przycisk przygotowuje komplet: obraz mapy (JPG), siatkę terenu (PNG) i wpis z kalibracją. Oba pliki zapisz
+       w folderze <code>treningi</code>, a wpis wklej do <code>treningi/treningi.json</code>, uzupełniając nazwę, opis i dojazd.
+       Uczestnik po kliknięciu treningu dostaje wszystko gotowe: jego telefon niczego nie przelicza.
+       Pliki OCAD i PDF zostają u Ciebie.</p>
+    <p><button id="ladmin">Przygotuj pliki treningu</button></p>
+    <div id="ladminfiles"></div>
     <textarea id="ladminout" rows="14" readonly hidden aria-label="Dane treningu"></textarea>
   </details>
 </main>
