@@ -19,7 +19,8 @@
     svg.append(el[name]);
   }
 
-  let W = 0, H = 0, mapKey = null;
+  let W = 0, H = 0, mapKey = null, mapName = '';
+  let locked = false;                   // mapa treningu: kalibracja jest gotowa i uczestnik jej nie zmienia
   let s = 1, ox = 0, oy = 0;           // ekran = mapa * s + (ox, oy)
   let vs = 1;                           // skala aktualnie widocznego widoku (mapa albo minimapa)
   let pairs = [], cal = null;           // punkty kalibracji i dopasowanie
@@ -158,24 +159,64 @@
       say('Plików OCAD jeszcze nie czytam. W OCAD wybierz Plik → Eksport → JPEG lub PNG (300 dpi) i wczytaj ten obraz.');
       return;
     }
+    loadMap(URL.createObjectURL(file), { key: 'bno-cal:' + file.name + ':' + file.size, name: file.name });
+  });
+
+  // Wczytuje obraz mapy. opts: { key, name, title?, preset? (gotowa kalibracja treningu), mode?, contour? }
+  function loadMap(src, opts) {
     img.onload = () => {
       W = img.naturalWidth; H = img.naturalHeight;
       world.style.width = W + 'px'; world.style.height = H + 'px';
       svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       svg.setAttribute('width', W); svg.setAttribute('height', H);
-      mapKey = 'bno-cal:' + file.name + ':' + file.size;
+      mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
       pairs = [];
-      try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
+      if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
+      else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
       cal = fit(pairs); track = []; pending = null; proc = null; target = null; route = null; routes = []; routeNote = '';
+      if (opts.mode) $('lmode').value = opts.mode;
+      if (opts.contour != null) $('lcontour').value = String(opts.contour);
       $('ltools').hidden = false;
+      $('lcaladd').hidden = locked; $('lcalclear').hidden = locked;
+      $('ltitle').textContent = opts.title || '';
+      setTapMode(null);
       fitView(); describe(); guide();
     };
-    img.onerror = () => say('Nie udało się wczytać tego pliku jako obrazu.');
-    img.src = URL.createObjectURL(file);
+    img.onerror = () => say(opts.preset ? 'Nie udało się pobrać mapy treningu. Sprawdź połączenie z internetem.' : 'Nie udało się wczytać tego pliku jako obrazu.');
+    img.src = src;
+  }
+
+  window.BnoLive = {
+    openTraining(t) {
+      say('Pobieram mapę treningu…');
+      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie });
+    },
+  };
+
+  // Dla admina: dane skalibrowanej mapy w formacie wpisu do treningi/treningi.json.
+  $('ladmin').addEventListener('click', () => {
+    const out = $('ladminout');
+    out.hidden = false;
+    if (!cal) { out.value = 'Najpierw wczytaj mapę i dodaj co najmniej 2 punkty kalibracji.'; return; }
+    const r = (v, k) => Math.round(v * k) / k;
+    out.value = JSON.stringify({
+      id: mapName.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      nazwa: 'NAZWA TRENINGU',
+      opis: 'Krótki opis: długość, trudność, do kiedy wiszą punkty.',
+      miejsce: 'Gdzie to jest i jak dojechać: parking, przystanek, miejsce startu.',
+      dojazd: { lat: r(pairs[0].lat, 1e5), lon: r(pairs[0].lon, 1e5) },
+      plik: 'treningi/' + mapName,
+      skala: 10000,
+      rodzaj: $('lmode').value,
+      ciecie: parseFloat($('lcontour').value),
+      kalibracja: pairs.map((p) => ({ lat: r(p.lat, 1e6), lon: r(p.lon, 1e6), px: r(p.px, 10), py: r(p.py, 10) })),
+    }, null, 2);
+    out.select();
   });
 
   function savePairs() {
     cal = fit(pairs);
+    if (locked) return;
     try { localStorage.setItem(mapKey, JSON.stringify(pairs)); } catch (err) { /* jw. */ }
   }
 

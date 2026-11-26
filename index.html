@@ -44,7 +44,8 @@
   .brand h1 { margin: 0; font: 700 34px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase; }
   .brand h1 span { color: var(--accent); }
   .brand p { margin: 3px 0 0; font-size: 13px; color: var(--muted); letter-spacing: 0.04em; }
-  nav { display: flex; gap: 4px; }
+  nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  nav button { flex: none; }
   nav button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; color: var(--muted);
                padding: 10px 12px; min-height: 44px; font: 600 17px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase; }
   nav button.on { background: none; color: var(--fg); border-bottom-color: var(--accent); }
@@ -143,6 +144,19 @@
   @media (max-width: 560px) { /* na telefonie zostają trzy kolumny, żeby nazwy terenu się mieściły */
     th:nth-child(4), td:nth-child(4), .note { display: none; }
   }
+  #trainings { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); margin-bottom: 4px; }
+  .card { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  .card h3 { margin: 0; font: 700 26px/1.05 var(--display); letter-spacing: 0.03em; text-wrap: balance; }
+  .card p { margin: 0; }
+  .card .facts { color: var(--accent); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .card .where { padding: 12px; border-radius: 10px; background: var(--raised); display: grid; gap: 6px; }
+  .card .where b { font: 600 14px/1 var(--display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .maplink { color: var(--accent); font-weight: 600; text-underline-offset: 3px; }
+  .card button { align-self: flex-start; margin-top: 2px; }
+  #ltitle { margin-top: 12px; font: 700 24px/1.1 var(--display); letter-spacing: 0.03em; }
+  #ltitle:empty { display: none; }
+  textarea { display: block; width: 100%; margin-bottom: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 10px;
+             background: var(--bg); color: var(--fg); font: 13px/1.4 ui-monospace, Consolas, monospace; }
   footer { max-width: 1000px; margin: 0 auto; padding: 0 16px 28px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -157,17 +171,34 @@
       </div>
     </div>
     <nav>
+      <button id="tabbtn-open" data-tab="open">Treningi</button>
       <button id="tabbtn-live" data-tab="live">Na żywo</button>
-      <button id="tabbtn-routes" data-tab="routes">Warianty ze zdjęcia</button>
+      <button id="tabbtn-routes" data-tab="routes">Warianty</button>
       <button id="tabbtn-info" data-tab="info">Założenia</button>
     </nav>
   </div>
 </header>
 
+<main id="tab-open" hidden>
+  <h2>Otwarte treningi</h2>
+  <p class="lead">Gotowe mapy klubu, już ustawione pod GPS. Dojedź na miejsce, otwórz mapę i włącz GPS –
+     zobaczysz na niej swoją pozycję bez żadnej kalibracji.</p>
+  <p id="trainings-note" class="status">Pobieram listę treningów…</p>
+  <div id="trainings"></div>
+  <details>
+    <summary>Kto dodaje treningi</summary>
+    <p>Listę treningów i mapy trzyma repozytorium strony. Zmienić je może tylko administrator, czyli osoba
+       z prawem zapisu do tego repozytorium – nikt inny nie doda ani nie podmieni mapy.</p>
+    <p>Żeby dodać trening, administrator wczytuje mapę w zakładce „Na żywo”, kalibruje ją i pobiera gotowe dane
+       przyciskiem „Dane treningu dla admina” (na dole tamtej zakładki).</p>
+  </details>
+</main>
+
 <main id="tab-live">
-  <label class="pick">Wczytaj mapę (JPG / PNG)
+  <label class="pick">Wczytaj własną mapę (JPG / PNG)
     <input id="lfile" type="file" accept="image/*,.ocd">
   </label>
+  <div id="ltitle"></div>
   <div id="lstatus" class="status"></div>
   <div id="ltools" class="tools" hidden>
     <button id="lgps">Włącz GPS</button>
@@ -247,6 +278,14 @@
       <li>Dodaj stronę do ekranu głównego (menu przeglądarki), żeby otwierała się jak aplikacja.</li>
     </ol>
     <p>Mapa i kalibracja zostają w przeglądarce tego urządzenia. Nic nie jest nigdzie wysyłane.</p>
+  </details>
+  <details>
+    <summary>Dane treningu dla admina</summary>
+    <p>Wczytaj mapę, dodaj punkty kalibracji (najlepiej 3–4, ze współrzędnych z Map Google), ustaw rodzaj mapy
+       i cięcie warstwicowe, a potem kliknij przycisk. Dostaniesz gotowy wpis do pliku
+       <code>treningi/treningi.json</code>; uzupełnij w nim nazwę, opis i dojazd. Plik mapy trafia do folderu <code>treningi</code>.</p>
+    <p><button id="ladmin">Pokaż dane tej mapy</button></p>
+    <textarea id="ladminout" rows="14" readonly hidden aria-label="Dane treningu"></textarea>
   </details>
 </main>
 
@@ -352,7 +391,7 @@
 
 <script>
   (function () {
-    const TABS = ['live', 'routes', 'info'];
+    const TABS = ['open', 'live', 'routes', 'info'];
     const show = (name) => {
       for (const t of TABS) {
         document.getElementById('tab-' + t).hidden = t !== name;
@@ -361,7 +400,7 @@
       try { localStorage.setItem('bno-tab', name); } catch (e) { /* nieistotne */ }
     };
     for (const b of document.querySelectorAll('nav button')) b.addEventListener('click', () => show(b.dataset.tab));
-    let start = 'live';
+    let start = 'open';
     try { const saved = localStorage.getItem('bno-tab'); if (TABS.includes(saved)) start = saved; } catch (e) { /* jw. */ }
     show(start);
   })();
@@ -370,6 +409,7 @@
 <script src="core.js"></script>
 <script src="info.js"></script>
 <script src="live.js"></script>
+<script src="treningi.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
