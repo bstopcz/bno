@@ -190,6 +190,24 @@ print('OK', {
   print('OK przewyższenia');
 }
 
+// --- okno wyszukiwania: krótki przebieg na dużej siatce nie przeszukuje całej mapy, a wynik jest ten sam ---
+{
+  const GW = 3200, GH = 2400, g = new Float32Array(GW * GH).fill(1.6);
+  for (let y = 900; y < 1100; y++) for (let x = 1500; x < 1520; x++) g[y * GW + x] = Infinity; // ściana w poprzek
+  const t = Date.now();
+  const leg = routeLeg(g, GW, GH, { x: 1400, y: 1000 }, { x: 1620, y: 1000 });
+  const ms = Date.now() - t;
+  assert.ok(leg.best && leg.best.path.every((i) => g[i] !== Infinity), 'trasa omija ścianę');
+  assert.strictEqual(leg.best.path[0], 1000 * GW + 1400);
+  assert.strictEqual(leg.best.path[leg.best.path.length - 1], 1000 * GW + 1620);
+  assert.ok(leg.best.length > 300 && leg.best.length < 420, 'długość obejścia: ' + leg.best.length);
+  // cel zamknięty w oknie, ale osiągalny dookoła: szukanie musi wyjść poza okno
+  for (let y = 0; y < GH; y++) g[y * GW + 1500] = y > 30 ? Infinity : 1.6;
+  const far = routeLeg(g, GW, GH, { x: 1480, y: 2300 }, { x: 1520, y: 2300 });
+  assert.ok(far.best && far.best.length > 4000, 'obejście przez całą mapę');
+  print('OK okno wyszukiwania, krótki przebieg na siatce 3200x2400 ms:', ms);
+}
+
 // wydajność na rozdzielczości roboczej telefonu
 const BW = 1600, BH = 1200;
 const big = new Float32Array(BW * BH).fill(1.6);

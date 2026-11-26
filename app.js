@@ -2,8 +2,8 @@
   'use strict';
   const { TERRAIN, POINT_NAMES, analyze: analyzeMap, costGrid, routeLeg } = BnoCore;
   const INK = { green: '#0a8a2a', black: '#000', brown: '#b4530a', blue: '#0b4fd6' };
-  const MAX_DIM = 1600;
-  const HI_DIM = 2600; // rozdzielczość do oceny kształtu czarnych linii
+  const MAX_DIM = BnoCore.GRID_DIM;
+  const HI_DIM = 4000; // rozdzielczość do oceny kształtu czarnych linii
   const CONTOUR_RGB = [176, 84, 10]; // rozdzielczość robocza (dłuższy bok)
 
   const $ = (id) => document.getElementById(id);

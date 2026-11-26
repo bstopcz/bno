@@ -143,14 +143,15 @@
 
   // Linie północy: kilka długich, równoległych, prawie pionowych czarnych kresek.
   // Bez tego trasa "biegłaby" po nich jak po ścieżkach. Wykrywane transformatą Hougha.
-  function removeNorthLines(cls, w, h) {
+  // klass: klasa pikseli, wśród których szukamy (czarne linie albo niebieskie).
+  function removeNorthLines(cls, w, h, klass) {
     const NT = 61, tans = new Float32Array(NT);
     for (let t = 0; t < NT; t++) tans[t] = Math.tan((t - 30) * 0.5 * Math.PI / 180);
     const off = Math.ceil(h * tans[NT - 1]) + 1, bins = w + 2 * off;
     const acc = new Uint16Array(NT * bins);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
-        if (cls[y * w + x] !== T.PATH) continue;
+        if (cls[y * w + x] !== klass) continue;
         for (let t = 0; t < NT; t++) acc[t * bins + Math.round(x - y * tans[t]) + off]++;
       }
     }
@@ -167,11 +168,12 @@
       if (peaks.length > bestPeaks.length) { bestPeaks = peaks; bestT = t; }
     }
     if (bestPeaks.length < 3) return 0;
+    const half = Math.max(1, Math.round(Math.max(w, h) / 1200)); // połowa szerokości czyszczonego paska
     for (const b of bestPeaks) {
       for (let y = 0; y < h; y++) {
         const xc = Math.round(b - off + y * tans[bestT]);
-        for (let x = Math.max(0, xc - 1); x <= Math.min(w - 1, xc + 1); x++) {
-          if (cls[y * w + x] === T.PATH) cls[y * w + x] = T.OVERLAY;
+        for (let x = Math.max(0, xc - half); x <= Math.min(w - 1, xc + half); x++) {
+          if (cls[y * w + x] === klass) cls[y * w + x] = T.OVERLAY;
         }
       }
     }
@@ -492,21 +494,29 @@
     regradeGreens(cls, data, w, h, kr, kg, kb, greenRef);
 
     // gruba czarna/szara plama = budynek; cienka linia = ścieżka (las) albo mur/płot (sprint)
-    const thickDark = opening(maskOf(T.PATH), w, h, Math.max(2, Math.round(r / 2)));
-    for (let i = 0; i < n; i++) if (thickDark[i]) cls[i] = T.BUILDING;
+    const darkAll = maskOf(T.PATH);
+    const thickDark = opening(darkAll, w, h, Math.max(2, Math.round(r / 2)));
 
     // gęsty czarny szraf = teren zakazany (stare mapy), a nie pęk ścieżek
-    const hatch = denseAreas(maskOf(T.PATH), w, h, P, 0.22);
+    let hatch = null; // liczony niżej, gdy znamy już kształt linii
     // kształt czarnych linii: ścieżka, płot do przejścia, mur / płot nie do przejścia albo linia bez znaczenia.
     // Szraf policzony wyżej musi być wcześniej, bo jego paski to dla tej analizy "cienkie linie bez znaczenia".
     const lab = hi && hi.w > w * 1.2
       ? Lines.pool(Lines.classifyLines(Lines.darkMask(hi.data, hi.w, hi.h), hi.w, hi.h, sprint), hi.w, hi.h, w, h)
-      : Lines.classifyLines(maskOf(T.PATH), w, h, sprint);
+      : Lines.classifyLines(darkAll, w, h, sprint);
+    // gruba czarna plama to budynek, ale gruba LINIA (droga na mapie w powiększeniu) budynkiem nie jest
+    for (let i = 0; i < n; i++) if (thickDark[i] && !lab[i]) cls[i] = T.BUILDING;
+    // szraf to gęste cienkie kreski; drogi, płoty i skały (rozpoznane linie) do gęstości się nie liczą
+    {
+      const thinDark = new Uint8Array(n);
+      for (let i = 0; i < n; i++) thinDark[i] = darkAll[i] && (lab[i] === 0 || lab[i] === Lines.NEUTRAL) ? 1 : 0;
+      hatch = denseAreas(thinDark, w, h, P, 0.22);
+    }
     // linie północy usuwamy przed etykietami i pilnujemy, żeby etykiety ich nie przywróciły
     let northI = null;
     if (!sprint) {
       const before = new Uint8Array(cls);
-      removeNorthLines(cls, w, h);
+      removeNorthLines(cls, w, h, T.PATH);
       const gone = new Uint8Array(n);
       for (let i = 0; i < n; i++) gone[i] = before[i] === T.PATH && cls[i] !== T.PATH ? 1 : 0;
       northI = integral(gone, w, h);
@@ -544,6 +554,7 @@
     const deep = maskOf(T.LAKE);
     const thickDeep = opening(deep, w, h, r);
     for (let i = 0; i < n; i++) if (deep[i] && !thickDeep[i]) cls[i] = T.WATER;
+    if (!sprint) removeNorthLines(cls, w, h, T.WATER); // linie północy bywają niebieskie
 
     // w sprincie ciemna zieleń jest zakazana
     if (sprint) for (let i = 0; i < n; i++) if (cls[i] === T.GREEN3) cls[i] = T.IMPVEG;
@@ -746,19 +757,56 @@
     return null;
   }
 
+  // Szukanie trasy w prostokącie [x0,x1) x [y0,y1) siatki. Wycinek kopiujemy do małych tablic,
+  // żeby na gęstej siatce (kilka milionów pól) jedna trasa nie przeszukiwała całej mapy.
+  function solveWindow(cost, w, h, a, b, climb, x0, y0, x1, y1) {
+    const ww = x1 - x0, wh = y1 - y0, whole = ww === w && wh === h;
+    let c = cost, cl = climb;
+    if (!whole) {
+      c = new Float32Array(ww * wh);
+      for (let y = 0; y < wh; y++) c.set(cost.subarray((y + y0) * w + x0, (y + y0) * w + x1), y * ww);
+      if (climb) {
+        const cc = new Uint8Array(ww * wh);
+        for (let y = 0; y < wh; y++) cc.set(climb.contour.subarray((y + y0) * w + x0, (y + y0) * w + x1), y * ww);
+        cl = { contour: cc, perCrossing: climb.perCrossing };
+      }
+    }
+    const ax = a.x - x0, ay = a.y - y0, bx = b.x - x0, by = b.y - y0;
+    const path = findPath(c, ww, wh, ax, ay, bx, by, cl);
+    if (!path) return null;
+    const best = Object.assign({ path }, pathStats(path, c, ww, cl));
+    const alt = path.length > 20 ? findAlternative(c, ww, wh, best, ax, ay, bx, by, cl) : null;
+    if (!whole) {
+      const toGlobal = (pth) => pth.map((i) => (((i / ww) | 0) + y0) * w + (i % ww) + x0);
+      best.path = toGlobal(best.path);
+      if (alt) alt.path = toGlobal(alt.path);
+    }
+    return { best, alt };
+  }
+
   // Przebieg między dwoma punktami: najlepszy wariant, alternatywa i linia prosta.
   // best === null oznacza brak przejścia. climb (opcjonalnie) włącza liczenie podejść.
+  // Najpierw szukamy w oknie wokół przebiegu (z marginesem równym jego długości + 150 pól);
+  // dopiero gdy tam nie ma przejścia, na całej mapie.
   function routeLeg(cost, w, h, p, q, climb) {
     const straight = lineStats(cost, w, p.x, p.y, q.x, q.y, climb);
     const a = nearestPassable(cost, w, h, p), b = nearestPassable(cost, w, h, q);
-    const path = a && b ? findPath(cost, w, h, a.x, a.y, b.x, b.y, climb) : null;
-    if (!path) return { best: null, alt: null, straight };
-    const best = Object.assign({ path }, pathStats(path, cost, w, climb));
-    const alt = path.length > 20 ? findAlternative(cost, w, h, best, a.x, a.y, b.x, b.y, climb) : null;
-    return { best, alt, straight };
+    if (!a || !b) return { best: null, alt: null, straight };
+    const m = Math.round(Math.hypot(b.x - a.x, b.y - a.y)) + 150;
+    const x0 = Math.max(0, Math.min(a.x, b.x) - m), y0 = Math.max(0, Math.min(a.y, b.y) - m);
+    const x1 = Math.min(w, Math.max(a.x, b.x) + m + 1), y1 = Math.min(h, Math.max(a.y, b.y) + m + 1);
+    const whole = x0 === 0 && y0 === 0 && x1 === w && y1 === h;
+    let res = solveWindow(cost, w, h, a, b, climb, x0, y0, x1, y1);
+    if (!res && !whole) res = solveWindow(cost, w, h, a, b, climb, 0, 0, w, h);
+    return { best: res ? res.best : null, alt: res ? res.alt : null, straight };
   }
 
-  const api = { T, TERRAIN, POINT_NAMES, CLIMB_FACTOR, analyze, classify, costGrid, findPath, pathStats, lineStats, routeLeg };
+  // Dłuższy bok siatki, na której rozpoznawany jest teren i liczona trasa. Gęstsza siatka = dokładniejsze
+  // linie i wąskie przejścia, ale analiza mapy trwa kilka razy dłużej i potrzebuje więcej pamięci,
+  // więc na urządzeniach z małą pamięcią (albo nieznaną, jak iPhone) zostajemy przy mniejszej.
+  const GRID_DIM = typeof navigator !== 'undefined' && navigator.deviceMemory >= 6 ? 3200 : 2400;
+
+  const api = { T, TERRAIN, POINT_NAMES, CLIMB_FACTOR, GRID_DIM, analyze, classify, costGrid, findPath, pathStats, lineStats, routeLeg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BnoCore = api;
 })(typeof self !== 'undefined' ? self : this);

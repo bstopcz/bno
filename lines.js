@@ -11,7 +11,6 @@
   'use strict';
 
   const NONE = 0, NEUTRAL = 1, PATH = 2, FENCE = 3, WALL = 4;
-  const DMAX = 6; // linie o połówce grubości większej niż tyle pikseli traktujemy jako plamy (budynki), nie linie
 
   // Maska ciemnych pikseli z RGBA, z tym samym wyrównaniem bieli co reszta analizy.
   function darkMask(data, w, h) {
@@ -126,6 +125,9 @@
   // NEUTRAL (linia bez wpływu na bieg), PATH, FENCE (przeszkoda do przejścia), WALL (nie do przejścia).
   function classifyLines(dark, w, h, sprint) {
     const n = w * h, nb = NB(w);
+    // połówka grubości (w pikselach), powyżej której ciemny kształt to plama (budynek), a nie linia.
+    // Skaluje się z siatką, bo na mapach w powiększeniu (1:7 500) droga ma ponad pół milimetra.
+    const DMAX = Math.max(6, Math.round(Math.max(w, h) / 250));
     const dt = distance(dark, w, h);
 
     // 1. linie = ciemne piksele poza grubymi plamami (budynki, duże napisy) i poza samym brzegiem obrazu
@@ -180,6 +182,21 @@
       comps.push(c);
     }
     const LONG = 25 * tref; // dłuższe składowe to linie, krótsze to kreski ścieżek albo symbole
+    // "kreska": prosty odcinek bez rozwidleń. Kreski stojące w rzędzie (koniec blisko końca innej) to linia
+    // przerywana, czyli ścieżka albo droga gruntowa. Samotna gruba kreska to zwykle skałka.
+    const isBar = (c) => !c.junction && c.ends === 2 && c.len >= Math.max(3, 2 * tref) && c.len < 80 * tref;
+    {
+      const ends = sk.filter((i) => A[i] === 1 && isBar(comps[comp[i]]));
+      // linia przerywana ma co najmniej trzy kreski: środkowa ma sąsiada z obu stron. Dwa kawałki obok siebie
+      // to zwykle jedna linia przecięta nadrukiem albo inną linią, a nie ścieżka.
+      const link = (p, q) => { const c = comps[p]; (c.nbrs || (c.nbrs = new Set())).add(q); };
+      nearPairs(ends, w, 8 * tref, (p, q) => {
+        const cp = comp[ends[p]], cq = comp[ends[q]];
+        if (cp !== cq) { link(cp, cq); link(cq, cp); }
+      });
+      for (const c of comps) c.inner = !!c.nbrs && c.nbrs.size >= 2;
+      for (const c of comps) c.chained = c.inner || (!!c.nbrs && [...c.nbrs].some((q) => comps[q].inner));
+    }
 
     // 4. kreseczki: krótkie odnogi od końca szkieletu do najbliższego rozwidlenia
     const spur = new Uint8Array(n), isBase = new Uint8Array(n);
@@ -285,14 +302,27 @@
     const bimodal = widths.length > 200 && t90 >= 1.6 * t10;
     const thickFrom = Math.sqrt(t10 * t90);
 
+    // skały: linia wyraźnie grubsza niż drogi na tej mapie (i bez kreseczek) to skała nie do przejścia.
+    // Oceniamy całą składową naraz, żeby zgrubienia na skrzyżowaniach dróg nie udawały skał.
+    const roads = widths.filter((t) => t >= thickFrom);
+    const tRoad = roads.length ? roads[roads.length >> 1] : Infinity;
+    for (const c of comps) { c.sum = 0; c.cnt = 0; }
+    for (const i of sk) if (!spur[i]) { const c = comps[comp[i]]; c.sum += 2 * dt[i] / 3 - 0.5; c.cnt++; }
+
     // 8. etykiety szkieletu
     const lab = new Uint8Array(n);
     for (const i of sk) {
       if (spur[i]) continue;
       const c = comps[comp[i]];
-      if (c.len < LONG) {
-        // krótka prosta kreska bez rozwidleń = kreska przerywanej ścieżki; reszta to symbole i litery
-        if (!c.junction && c.ends === 2 && c.len >= Math.max(3, 2 * tref)) lab[i] = sprint ? NEUTRAL : PATH;
+      const bar = isBar(c);
+      if (c.len < LONG && !bar) continue; // symbol albo litera: zostawiamy reszcie analizy
+      if (bar && c.chained) { lab[i] = sprint ? NEUTRAL : PATH; continue; }
+      if (!sprint && bimodal && c.cnt && c.sum / c.cnt >= 1.35 * tRoad) { lab[i] = WALL; continue; }
+      if (bar && reach[i] < 3) {
+        // samotna kreska: gruba = skałka / murek (nie do przejścia), cienka = bez znaczenia
+        // (dłuższy odcinek albo kawałek z sąsiadem to raczej droga przecięta inną linią niż skała)
+        const rock = sprint || (c.len < 30 * tref && !c.nbrs);
+        lab[i] = bimodal ? (2 * dt[i] / 3 - 0.5 >= thickFrom ? (rock ? WALL : PATH) : NEUTRAL) : (sprint ? WALL : PATH);
         continue;
       }
       const thick = 2 * localDt(i) / 3 - 0.5 >= thickFrom;

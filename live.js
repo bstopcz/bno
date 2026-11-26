@@ -2,11 +2,11 @@
 (function () {
   'use strict';
   const { fit, toPixel, headingVector, bearingOf, parseLatLon, distance } = BnoGeo;
-  const { analyze, costGrid, routeLeg, CLIMB_FACTOR } = BnoCore;
+  const { analyze, costGrid, routeLeg, CLIMB_FACTOR, GRID_DIM } = BnoCore;
   const $ = (id) => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
-  const HI_DIM = 2600;     // rozdzielczość, w której oceniany jest kształt czarnych linii (płot czy ścieżka)
-  const PROC_DIM = 1600;   // rozdzielczość, w której liczona jest trasa
+  const HI_DIM = 4000;     // rozdzielczość, w której oceniany jest kształt czarnych linii (płot czy ścieżka)
+  const PROC_DIM = GRID_DIM;   // rozdzielczość, w której liczona jest trasa
   const TANGENT_M = 9;     // kierunek trasy liczony z tylu metrów linii przed Tobą
   const RETURN_M = 15;     // dalej od linii niż tyle metrów: strzałka prowadzi z powrotem na trasę
   const BACK_M = 20;       // tyle metrów wstecz od ostatniego miejsca na trasie jeszcze sprawdzamy
@@ -423,7 +423,7 @@
     if (!target) { refresh(); return; }
     if (!pos) { routeNote = 'Cel ustawiony. Trasa policzy się, gdy będzie kalibracja i pozycja z GPS.'; refresh(); return; }
     if (pos.x < 0 || pos.y < 0 || pos.x >= W || pos.y >= H) { routeNote = 'Jesteś poza mapą – nie policzę trasy.'; refresh(); return; }
-    routeNote = 'Liczę trasę…';
+    routeNote = proc ? 'Liczę trasę…' : 'Liczę trasę… (pierwsza analiza mapy może potrwać kilkanaście sekund)';
     guide();
     setTimeout(() => {
       try {
@@ -501,7 +501,7 @@
   function maybeReroute() {
     if (route && route.custom) return; // własnej trasy nie poprawiamy
     const pos = position();
-    if (!target || !pos || routeNote === 'Liczę trasę…') return;
+    if (!target || !pos || routeNote.startsWith('Liczę trasę')) return;
     if (!route) { if (!routeAt || Date.now() - routeAt > 20000) { if (!routeAt) computeRoute(); } return; }
     const off = matchRoute(pos).d / cal.pxPerM;
     const g = guidance();

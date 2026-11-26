@@ -385,6 +385,7 @@
   <ul>
     <li><b>Krótkie kreski w rzędzie</b> (linia przerywana): ścieżka.</li>
     <li><b>Ciągła gruba linia</b> bez znaczków: na mapie leśnej droga, w sprincie mur nie do przejścia.</li>
+    <li><b>Linia wyraźnie grubsza niż drogi</b> albo <b>samotna gruba kreska</b> (mapa leśna): skała nie do przejścia.</li>
     <li><b>Ciągła cienka linia</b> bez znaczków: bez wpływu na bieg (granica, przecinka, krawędź, linia północy).</li>
     <li><b>Linia z kreseczkami albo kropkami z boku</b>: płot lub mur. Pojedyncze znaczki na cienkiej linii to przeszkoda
         do przejścia (liczona jak kilkanaście metrów biegu), podwójne znaczki albo gruba linia to przeszkoda nie do przejścia.</li>
@@ -401,7 +402,10 @@
 
   <h2>Czego silnik nie wie</h2>
   <ul>
-    <li>Czy gruba ciągła linia na mapie leśnej to droga, czy skała bez „zębów”. Traktuje ją jak drogę.</li>
+    <li>Czy linia o grubości drogi to droga, czy skała narysowana tak samo grubo. Skałę rozpoznaje tylko wtedy,
+        gdy jest wyraźnie grubsza od dróg, stoi osobno albo ma „zęby”.</li>
+    <li>Szczegółów mniejszych niż jedno pole siatki. Mapa jest dzielona na siatkę o dłuższym boku 3200 pól
+        (2400 na urządzeniach z mniejszą pamięcią); na mapie 2 × 1,5 km jedno pole to ok. 0,6–0,8 m.</li>
     <li>Co oznaczają linie na obrazie o małej rozdzielczości: kreseczki płotu muszą mieć co najmniej 2–3 piksele, żeby je zobaczył.</li>
     <li>Jaka jest jakość ścieżki: droga, dukt i ledwie widoczna ścieżka mają ten sam mnożnik.</li>
     <li>Jakie jest podłoże, pora roku i Twoja forma. Mnożniki są stałe i takie same dla każdego.</li>
