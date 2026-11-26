@@ -112,6 +112,11 @@
   #lararrow polygon { fill: #e53935; stroke: #fff; stroke-width: 4; stroke-linejoin: round; }
   #larpin { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
             border: 5px solid #a000c8; background: rgba(255,255,255,0.35); box-shadow: 0 0 0 2px #fff; }
+  #lfull { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+           pointer-events: auto; background: rgba(4,19,10,0.78); border-color: var(--accent); }
+  #lstage.full { position: fixed; inset: 0; z-index: 100; height: auto; min-height: 0; border: 0; border-radius: 0; }
+  #lstage.full #lartext { top: calc(10px + env(safe-area-inset-top, 0px)); }
+  #lstage.full #lmini { top: calc(74px + env(safe-area-inset-top, 0px)); }
   #lpanel { padding: 14px; margin-bottom: 12px; border: 1px solid var(--accent); border-radius: 12px; background: var(--surface); }
   #lpanel p { margin: 0 0 10px; }
   #lpanel .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -242,6 +247,7 @@
       <div id="lartext"></div>
       <div id="larpin" hidden></div>
       <div id="lmini" hidden></div>
+      <button id="lfull">Pełny ekran</button>
       <div id="lararrow" hidden><svg viewBox="0 0 100 100"><polygon points="50,4 88,58 64,58 64,96 36,96 36,58 12,58"/></svg></div>
     </div>
   </div>
@@ -262,8 +268,9 @@
       <li>Jeśli są dwa sensowne warianty, pod statusem pojawią się przyciski „Wariant A / B”. Wybrany jest czerwony,
           drugi niebieski przerywany; strzałka prowadzi po wybranym.</li>
       <li>„Kamera”: trzymaj telefon pionowo przed sobą. W rogu masz minimapę z Twoją pozycją, obróconą zgodnie z kierunkiem patrzenia. Strzałka pokazuje kierunek trasy w miejscu, w którym jesteś
-          (a gdy odejdziesz od niej o ponad 15 m, prowadzi z powrotem na linię),
-          a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy.</li>
+          (a gdy odejdziesz od niej o ponad 15 m, prowadzi z powrotem na linię, omijając teren nie do przejścia),
+          a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy. Przycisk „Pełny ekran” w rogu
+          obrazu rozciąga kamerę na cały ekran telefonu.</li>
     </ol>
     <p>Kalibracja zapisuje się w tej przeglądarce dla danego pliku mapy.</p>
   </details>
@@ -448,6 +455,29 @@ window.onerror = (m) => { document.title = 'FAIL ' + m; };
   await wait(300);
   const gps = (x, y) => { const p = ll(x, y); cb({ coords: { latitude: p.lat, longitude: p.lon, accuracy: 8 } }); };
   const forest = location.hash.includes('b'); // #b: przebieg przez las, gdzie są dwa warianty
+  if (location.hash.includes('r')) {
+    // krótka trasa na polu na północ od jeziora; potem pozycja po tej samej stronie i po drugiej stronie jeziora
+    gps(750, 290);
+    $('ldraw').click();
+    const r = $('lstage').getBoundingClientRect(), m = new DOMMatrix(getComputedStyle($('lworld')).transform);
+    const ev = (type, x, y) => $('lstage').dispatchEvent(new PointerEvent(type, { clientX: r.left + x * m.a + m.e, clientY: r.top + y * m.a + m.f, pointerId: 9, bubbles: true }));
+    ev('pointerdown', 750, 290);
+    for (let i = 1; i <= 14; i++) ev('pointermove', 750 + i * 10, 290 + i * 3.5);
+    ev('pointerup', 890, 339);
+    $('ldrawdone').click();
+    await wait(8000);
+    window.dispatchEvent(Object.assign(new Event('deviceorientationabsolute'), { absolute: true, alpha: 0, beta: 90, gamma: 0 }));
+    const out = [];
+    const at = async (label, x, y, pause) => { await wait(pause); gps(x, y); out.push(label + ': ' + $('lguide').textContent); };
+    await at('na trasie', 780, 300, 1000);
+    await at('40 m w bok, ta sama strona jeziora', 770, 262, 5000);
+    await at('po drugiej stronie jeziora 1', 820, 655, 60000);
+    await at('2', 820, 655, 1000);
+    await at('3', 820, 655, 1000);
+    if (location.hash.includes('f')) { $('lcam').click(); await wait(800); $('lfull').click(); await wait(300); out.push('full ' + $('lstage').classList.contains('full') + ' ' + Math.round($('lstage').getBoundingClientRect().height) + '/' + innerHeight); }
+    document.title = out.join(' || ');
+    return;
+  }
   if (location.hash.includes('k')) {
     // 150 m na wschód, potem 150 m na północ; telefon skierowany na północ
     gps(1180, 900);

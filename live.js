@@ -10,6 +10,7 @@
   const RETURN_M = 15;     // dalej od linii niż tyle metrów: strzałka prowadzi z powrotem na trasę
   const BACK_M = 20;       // tyle metrów wstecz od ostatniego miejsca na trasie jeszcze sprawdzamy
   const MAX_SPEED = 8;     // m/s: szybciej po trasie się nie przesuniesz (odrzuca skoki GPS)
+  const RETURN_TRY_M = [9, 20, 35, 50, 70, 0, -15, -30]; // gdzie na trasie szukamy miejsca, do którego da się wrócić po prostej
   const LOST_FIXES = 3;    // tyle odczytów z rzędu daleko od oczekiwanego miejsca = szukamy na całej trasie
   const MINI_SPAN_M = 220; // tyle metrów terenu mieści się na szerokość minimapy w trybie kamery
   const CAM_HFOV = 55;     // przybliżony poziomy kąt widzenia kamery telefonu (pionowo)
@@ -335,6 +336,8 @@
     routes = [route]; routeNote = ''; routeAt = Date.now();
     setTapMode(null);
     refresh();
+    // teren potrzebny do sprawdzania przeszkód przy powrocie na narysowaną trasę
+    setTimeout(() => { try { ensureProc(); } catch (err) { /* bez tego wracamy po prostej */ } refresh(); }, 60);
   });
 
   $('lcaladd').addEventListener('click', () => setTapMode('cal'));
@@ -491,7 +494,26 @@
     if (!target || !pos || routeNote === 'Liczę trasę…') return;
     if (!route) { if (!routeAt || Date.now() - routeAt > 20000) { if (!routeAt) computeRoute(); } return; }
     const off = matchRoute(pos).d / cal.pxPerM;
+    const g = guidance();
+    // do trasy nie da się wrócić po prostej (przeszkoda) -> od razu liczymy nową z miejsca, w którym jesteś
+    if (g && g.blocked && Date.now() - routeAt > 5000) { computeRoute(); return; }
     if (off > Math.max(40, 2 * fix.acc) && Date.now() - routeAt > 15000) computeRoute();
+  }
+
+  // Czy z a do b da się przejść po prostej bez wchodzenia w teren nie do przejścia (współrzędne obrazu).
+  // Jeśli GPS postawił Cię "w budynku", początek odcinka aż do wyjścia z przeszkody nie liczy się.
+  function lineClear(a, b) {
+    const ax = a.x * proc.k, ay = a.y * proc.k, bx = b.x * proc.k, by = b.y * proc.k;
+    const steps = Math.ceil(Math.hypot(bx - ax, by - ay));
+    let outside = false;
+    for (let i = 0; i <= steps; i++) {
+      const t = steps ? i / steps : 0;
+      const x = Math.round(ax + (bx - ax) * t), y = Math.round(ay + (by - ay) * t);
+      if (x < 0 || y < 0 || x >= proc.w || y >= proc.h) continue;
+      if (proc.cost[y * proc.w + x] !== Infinity) outside = true;
+      else if (outside) return false;
+    }
+    return true;
   }
 
   // Kierunek i dystans albo null. Na trasie strzałka pokazuje kierunek samej linii w miejscu, w którym
@@ -501,20 +523,27 @@
     const pos = position();
     if (!target || !pos) return null;
     const straight = Math.hypot(target.x - pos.x, target.y - pos.y) / cal.pxPerM;
-    let from = pos, aim = target, dist = straight, off = 0, returning = false;
+    let from = pos, aim = target, dist = straight, off = 0, returning = false, blocked = false;
     if (route) {
       const k = cal.pxPerM, total = route.cum[route.cum.length - 1], m = matchRoute(pos);
       off = m.d / k;
       dist = (total - m.c) / k + off;
       const ahead = pointAt(route, m.c + TANGENT_M * k);
-      if (off > Math.max(RETURN_M, fix.acc)) { aim = ahead; returning = true; }
+      if (off > Math.max(RETURN_M, fix.acc)) {
+        returning = true;
+        aim = ahead;
+        if (proc) { // wracamy tylko tam, dokąd nie trzeba iść przez jezioro, budynek czy teren zakazany
+          const reachable = RETURN_TRY_M.map((d) => pointAt(route, m.c + d * k)).find((q) => lineClear(pos, q));
+          if (reachable) aim = reachable; else blocked = true;
+        }
+      }
       else if (total - m.c > 2 * k) { from = pointAt(route, m.c); aim = ahead; }
     }
     if (Math.hypot(aim.x - from.x, aim.y - from.y) < 1e-6) { from = pos; aim = target; }
     return {
       bearing: bearingOf(cal, aim.x - from.x, aim.y - from.y), // dokąd biec teraz
       targetBearing: bearingOf(cal, target.x - pos.x, target.y - pos.y), // gdzie leży punkt docelowy
-      dist, off, returning, arrived: straight < Math.max(15, fix.acc),
+      dist, off, returning, blocked, arrived: straight < Math.max(15, fix.acc),
     };
   }
 
@@ -532,6 +561,7 @@
           text += a < 15 ? ' · prosto' : a > 135 ? ' · zawróć' : (rel > 0 ? ' · w prawo ' : ' · w lewo ') + Math.round(a / 5) * 5 + '°';
         }
         if (g.returning) text += ` · wróć na trasę (${Math.round(g.off / 5) * 5} m obok)`;
+        if (g.blocked) text += ' · między Tobą a trasą jest przeszkoda, obejdź ją';
         if (!route) text += ' · brak trasy, kierunek prosto na cel';
         if (routeNote) text += ' · ' + routeNote;
       }
@@ -582,12 +612,29 @@
     }
     video.hidden = !stream; $('lar').hidden = !stream; $('lmini').hidden = !stream;
     if (stream) $('lmini').append(world); else stage.prepend(world); // ta sama mapa: duża albo jako minimapa
+    if (!stream && stage.classList.contains('full')) setFull(false);
     $('lcam').textContent = stream ? 'Pokaż mapę' : 'Kamera';
     $('lcam').classList.toggle('on', !!stream);
     if (stream) stage.scrollIntoView({ block: 'start' }); // obraz z kamery na cały ekran telefonu
     refresh();
   }
   $('lcam').addEventListener('click', () => { startCompass(); setCamera(!stream); });
+
+  // Pełny ekran kamery. Klasa CSS działa wszędzie (także na iPhonie), a tam, gdzie przeglądarka
+  // na to pozwala, dodatkowo chowamy jej paski prawdziwym trybem pełnoekranowym.
+  function setFull(on) {
+    stage.classList.toggle('full', on);
+    $('lfull').textContent = on ? 'Zamknij pełny ekran' : 'Pełny ekran';
+    try {
+      if (on && stage.requestFullscreen) stage.requestFullscreen().catch(() => {});
+      else if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch (err) { /* zostaje wersja CSS */ }
+    refresh();
+  }
+  $('lfull').addEventListener('click', () => setFull(!stage.classList.contains('full')));
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && stage.classList.contains('full')) setFull(false); // wyjście gestem "wstecz"
+  });
 
   // ---------- GPS i kompas ----------
   function setFollow(on) {
