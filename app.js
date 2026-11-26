@@ -10,6 +10,7 @@
   const ctx = canvas.getContext('2d');
 
   let photo = null, pixels = null, classView = null, cost = null, contour = null;
+  let natW = 0; // szerokość oryginalnego pliku w pikselach (do przeliczenia skali)
   let W = 0, H = 0, zoom = 1;
   let points = [], legs = [];
   let showClasses = false, busy = false;
@@ -42,6 +43,7 @@
     vctx.putImageData(out, 0, 0);
     drawFeatures(vctx, features);
     legs = [];
+    showScale();
     for (let i = 1; i < points.length; i++) legs.push(routeLeg(cost, W, H, points[i - 1], points[i], climb()));
     draw(); renderInfo();
   }
@@ -68,15 +70,49 @@
     }
   }
 
-  const spanM = () => parseFloat(String($('spanm').value).replace(',', '.'));
-  const hasScale = () => spanM() > 0;
+  // DPI zapisane w pliku: JPEG (nagłówek JFIF) albo PNG (blok pHYs). null, gdy go nie ma.
+  function readDpi(buf) {
+    const d = new DataView(buf);
+    try {
+      if (d.getUint32(0) === 0x89504e47) {
+        for (let o = 8; o + 12 <= d.byteLength;) {
+          const len = d.getUint32(o), type = d.getUint32(o + 4);
+          if (type === 0x70485973) return d.getUint8(o + 16) === 1 ? d.getUint32(o + 8) * 0.0254 : null;
+          if (type === 0x49444154) break;
+          o += 12 + len;
+        }
+      } else if (d.getUint16(0) === 0xffd8) {
+        for (let o = 2; o + 4 <= d.byteLength && d.getUint8(o) === 0xff;) {
+          const marker = d.getUint8(o + 1), len = d.getUint16(o + 2);
+          if (marker === 0xe0 && d.getUint32(o + 4) === 0x4a464946) {
+            const units = d.getUint8(o + 11), x = d.getUint16(o + 12);
+            return units === 1 ? x : units === 2 ? x * 2.54 : null;
+          }
+          if (marker === 0xda) break;
+          o += 2 + len;
+        }
+      }
+    } catch (err) { /* ucięty plik */ }
+    return null;
+  }
+
+  // Skala mapy + DPI pliku -> ile metrów terenu ma jeden piksel analizy.
+  const num = (id) => parseFloat(String($(id).value).replace(',', '.'));
+  const hasScale = () => num('scale') > 0 && num('dpi') > 0 && W > 0;
+  const metersPerPx = () => num('scale') * 0.0254 / num('dpi') * natW / W;
+
+  function showScale() {
+    $('scaleinfo').textContent = hasScale()
+      ? `Przy tej skali i DPI plik obejmuje ok. ${Math.round(metersPerPx() * W / 10) * 10} × ${Math.round(metersPerPx() * H / 10) * 10} m terenu. Jeśli to się nie zgadza z mapą, popraw DPI.`
+      : '';
+  }
 
   // Podejścia wpływają na trasę tylko, gdy znamy skalę: szerokość zdjęcia w metrach terenu.
   function climb() {
     const interval = parseFloat($('contour').value);
     if (!(interval > 0)) return null;
     // bez skali warstwice są tylko liczone (kara 0), ze skalą wpływają na wybór wariantu
-    return { contour, perCrossing: hasScale() ? interval / 2 * BnoCore.CLIMB_FACTOR * W / spanM() : 0 };
+    return { contour, perCrossing: hasScale() ? interval / 2 * BnoCore.CLIMB_FACTOR / metersPerPx() : 0 };
   }
 
   function runBusy(message, work) {
@@ -94,7 +130,10 @@
     if (!file || busy) return;
     status('Wczytuję zdjęcie…');
     try {
+      const dpi = readDpi(await file.arrayBuffer());
+      if (dpi >= 100 && dpi <= 1200) $('dpi').value = Math.round(dpi); // 72/96 to zwykle wartość domyślna, nie prawdziwa
       const img = await loadImage(file);
+      natW = img.naturalWidth;
       const k = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
       W = Math.round(img.naturalWidth * k);
       H = Math.round(img.naturalHeight * k);
@@ -115,7 +154,7 @@
     }
   });
 
-  for (const id of ['mode', 'contour', 'spanm']) {
+  for (const id of ['mode', 'contour', 'scale', 'dpi']) {
     $(id).addEventListener('change', () => {
       if (pixels && !busy) runBusy('Analizuję mapę…', analyze);
     });
@@ -220,8 +259,9 @@
     }
     if (leg.best.crossings != null) {
       text += ` Przecina ${leg.best.crossings} warstwic` + (leg.straight.cost === Infinity ? '.' : ` (prosta: ${leg.straight.crossings}).`);
-      if (!hasScale()) text += ' Wpisz szerokość obszaru w metrach, żeby podejścia wpływały na wybór wariantu.';
+      if (!hasScale()) text += ' Podaj skalę i DPI, żeby podejścia wpływały na wybór wariantu.';
     }
+    if (hasScale()) text += ` Długość ok. ${Math.round(leg.best.length * metersPerPx() / 10) * 10} m.`;
     if (leg.alt) {
       const slower = Math.round((leg.alt.cost / leg.best.cost - 1) * 100);
       text += ` Alternatywa (niebieska przerywana): ${slower}% wolniejsza.`;

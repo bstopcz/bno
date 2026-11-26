@@ -86,7 +86,7 @@ print('OK', {
 // --- symbole punktowe: zielony × (wykrot) na jasnej zieleni nie może zostać gęstwiną ---
 {
   rect(0, 0, W, H, [250, 250, 248]);
-  rect(50, 50, 250, 150, [200, 240, 195]); // jasna zieleń
+  rect(50, 50, 250, 150, [217, 236, 216]); // jasna zieleń (blada jak na prawdziwej mapie)
   const G = [47, 180, 83];
   for (let d = -2; d <= 2; d++) { rect(100 + d, 100 + d, 101 + d, 101 + d, G); rect(100 + d, 100 - d, 101 + d, 101 - d, G); }
   for (let a = 0; a < 40; a++) { // zielone kółko (drzewo)
@@ -126,6 +126,23 @@ print('OK', {
   assert.strictEqual(JSON.stringify(geo.parseLatLon('52,2297; 21,0122')), JSON.stringify({ lat: 52.2297, lon: 21.0122 }));
   assert.strictEqual(geo.parseLatLon('abc'), null);
   print('OK georeferencja');
+}
+
+// --- stopnie zieleni liczone względem najciemniejszej zieleni na mapie ---
+{
+  rect(0, 0, W, H, [250, 250, 248]);
+  rect(10, 10, 90, 90, [217, 236, 216]);   // jasna
+  rect(110, 10, 190, 90, [163, 212, 165]); // średnia
+  rect(210, 10, 290, 90, [47, 180, 87]);   // ciemna
+  for (let x = 20; x < 90; x += 4) rect(x, 110, x + 1, 190, [99, 197, 128]); // paski podszytu
+  const c5 = classify(data, W, H, 'forest');
+  assert.strictEqual(c5[50 * W + 50], T.GREEN1, 'blada zieleń to jasna zieleń, nie biały las');
+  assert.strictEqual(c5[50 * W + 150], T.GREEN2);
+  assert.strictEqual(c5[50 * W + 250], T.GREEN3);
+  assert.strictEqual(c5[150 * W + 50], T.GREEN1, 'paski podszytu zlewają się w jasną zieleń');
+  assert.strictEqual(c5[150 * W + 51], T.GREEN1);
+  assert.strictEqual(c5[150 * W + 200], T.FOREST);
+  print('OK zieleń');
 }
 
 // --- przewyższenia: trzy warstwice w poprzek przebiegu, obejście bokiem jest dłuższe, ale płaskie ---

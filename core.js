@@ -334,6 +334,61 @@
     for (let q = 0; q < found.length; q += 2) cls[found[q]] = found[q + 1];
   }
 
+  // Stopnie zieleni. Próg nasycenia na pojedynczym pikselu zawodził: jasna zieleń (20-30% farby) jest tak
+  // blada, że wychodziła jako biały las, a raster i szraf podszytu dawały kaszę. Dlatego:
+  //  1. "zieloność" piksela to g - (r + b) / 2 (biały = 0),
+  //  2. uśredniamy ją w oknie 5x5 po pikselach lasu (raster i paski podszytu zlewają się w odcień),
+  //  3. odcień oceniamy względem najciemniejszej zieleni na mapie, którą przyjmujemy za 100% farby
+  //     (prawie każda mapa ma takie piksele: gęstwiny, zielone krzyżyki, paski podszytu).
+  const isWoods = (c) => c === T.FOREST || c === T.GREEN1 || c === T.GREEN2 || c === T.GREEN3;
+
+  // "Zieloność" pełnej (100%) zieleni na tej mapie. Liczona przed wycięciem symboli punktowych,
+  // bo zielone krzyżyki i kółka często są jedyną pełną zielenią na arkuszu.
+  function greenReference(cls, data, kr, kg, kb) {
+    const hist = new Uint32Array(256);
+    let greens = 0;
+    for (let i = 0; i < cls.length; i++) {
+      if (!isWoods(cls[i])) continue;
+      const o = i * 4;
+      const v = Math.round(Math.min(255, data[o + 1] * kg) - (Math.min(255, data[o] * kr) + Math.min(255, data[o + 2] * kb)) / 2);
+      if (v > 9) { hist[v]++; greens++; }
+    }
+    const need = Math.max(12, greens * 0.0003);
+    for (let v = 255, acc = 0; v > 9; v--) {
+      acc += hist[v];
+      if (acc >= need) return Math.max(v, 60);
+    }
+    return 113; // brak zieleni na mapie: wartość typowa
+  }
+
+  function regradeGreens(cls, data, w, h, kr, kg, kb, ref) {
+    const n = w * h, W1 = w + 1;
+    const area = new Uint8Array(n), G = new Int16Array(n);
+    for (let i = 0; i < n; i++) {
+      if (!isWoods(cls[i])) continue;
+      const o = i * 4;
+      const r = Math.min(255, data[o] * kr), g = Math.min(255, data[o + 1] * kg), b = Math.min(255, data[o + 2] * kb);
+      area[i] = 1; G[i] = Math.max(0, Math.round(g - (r + b) / 2));
+    }
+    const IA = integral(area, w, h);
+    const IG = new Int32Array(W1 * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let row = 0;
+      for (let x = 0; x < w; x++) {
+        row += G[y * w + x];
+        IG[(y + 1) * W1 + x + 1] = IG[y * W1 + x + 1] + row;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!area[i]) continue;
+        const f = boxSum(IG, w, h, x, y, 2) / boxSum(IA, w, h, x, y, 2) / ref;
+        cls[i] = f < 0.08 ? T.FOREST : f < 0.36 ? T.GREEN1 : f < 0.75 ? T.GREEN2 : T.GREEN3;
+      }
+    }
+  }
+
   // Warstwice to cienkie linie, które na zdjęciu zlewają się z tłem (brąz na zieleni wychodzi oliwkowo),
   // więc sam próg koloru ich nie łapie. Szukamy "grzbietów": pikseli wyraźnie bardziej czerwonych (r - g)
   // niż otoczenie po OBU stronach w którymś kierunku. Krawędź plamy (żółte pole, droga) grzbietem nie jest.
@@ -410,6 +465,7 @@
     // małe symbole (wykrot, kamień, kopczyk...) wycinamy, zanim policzymy teren
     const P = Math.max(6, Math.round(Math.max(w, h) / 150));
     const features = [];
+    const greenRef = greenReference(cls, data, kr, kg, kb);
     extractPoints(cls, w, h, P, features);
 
     // warstwice: długie brązowe linie (małe brązowe symbole są już wycięte)
@@ -429,6 +485,8 @@
     }
     bridgeContours(contour, cover, w, h, r + 6);
     for (let i = 0; i < n; i++) if (cls[i] === T.BROWN) cls[i] = T.OVERLAY;
+
+    regradeGreens(cls, data, w, h, kr, kg, kb, greenRef);
 
     // gruba czarna/szara plama = budynek; cienka linia = ścieżka (las) albo mur/płot (sprint)
     const thickDark = opening(maskOf(T.PATH), w, h, Math.max(2, Math.round(r / 2)));

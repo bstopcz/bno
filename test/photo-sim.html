@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0a0d0b">
 <title>BKS Wataha BnO</title>
-<link rel="icon" href="logo.jpg">
-<link rel="apple-touch-icon" href="logo.jpg">
+<link rel="icon" href="../logo.jpg">
+<link rel="apple-touch-icon" href="../logo.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
@@ -126,6 +126,20 @@
   details p:last-child, details ol:last-child { margin-bottom: 14px; }
   details b { color: var(--fg); }
   code { padding: 1px 5px; border-radius: 5px; background: var(--raised); font-size: 0.92em; overflow-wrap: anywhere; }
+  h2 { margin: 26px 0 8px; font: 700 22px/1.1 var(--display); letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
+  main > h2:first-child { margin-top: 6px; }
+  .lead { margin: 0 0 12px; max-width: 65ch; }
+  .note { margin: 8px 0 0; color: var(--muted); font-size: 14px; }
+  #tab-info ul { margin: 0; padding-left: 20px; max-width: 70ch; }
+  #tab-info li { margin: 7px 0; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 10px 12px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; }
+  th { color: var(--muted); font: 600 14px/1.2 var(--display); letter-spacing: 0.06em; text-transform: uppercase; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td i { display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 1px solid var(--muted); border-radius: 3px; vertical-align: -2px; }
+  tr.blocked td { color: var(--muted); }
   footer { max-width: 1000px; margin: 0 auto; padding: 0 16px 28px; color: var(--muted); font-size: 13px; }
 </style>
 </head>
@@ -142,6 +156,7 @@
     <nav>
       <button id="tabbtn-live" data-tab="live">Na żywo</button>
       <button id="tabbtn-routes" data-tab="routes">Warianty ze zdjęcia</button>
+      <button id="tabbtn-info" data-tab="info">Założenia</button>
     </nav>
   </div>
 </header>
@@ -250,10 +265,19 @@
       <option value="5">5 m</option>
     </select>
   </label>
-  <label class="mode">Szerokość sfotografowanego obszaru w terenie, w metrach (kartka A4 w skali 1:10 000 to ok. 2100 m).
-    Bez tej liczby przewyższenia nie są liczone:
-    <input id="spanm" type="text" inputmode="decimal" placeholder="np. 2100">
+  <label class="mode">Skala mapy:
+    <select id="scale">
+      <option value="4000">1:4 000</option>
+      <option value="5000">1:5 000</option>
+      <option value="7500">1:7 500</option>
+      <option value="10000" selected>1:10 000</option>
+      <option value="15000">1:15 000</option>
+    </select>
   </label>
+  <label class="mode">Rozdzielczość pliku w DPI (taka, jaką ustawiono przy eksporcie z OCAD; odczytuję ją z pliku, jeśli jest zapisana):
+    <input id="dpi" type="text" inputmode="decimal" value="300">
+  </label>
+  <div id="scaleinfo" class="status"></div>
   <div id="status" class="status">Zacznij od zdjęcia mapy – równo z góry, bez cieni i odblasków.</div>
   <div id="tools" class="tools" hidden>
     <button id="undo">Cofnij punkt</button>
@@ -267,12 +291,67 @@
   <div id="info"></div>
 </main>
 
+<main id="tab-info" hidden>
+  <h2>Jak szybko biegnie się po czym</h2>
+  <p class="lead">Silnik liczy czas, nie dystans. Ścieżka to prędkość 100%, a każdy inny teren jest od niej wolniejszy
+     o stały mnożnik. Wariant wygrywa, gdy suma „odcinek × mnożnik” plus podejścia jest najmniejsza.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Teren na mapie</th><th>Mnożnik czasu</th><th>Prędkość</th><th>100 m kosztuje jak</th></tr></thead>
+      <tbody id="speeds"></tbody>
+    </table>
+  </div>
+  <p class="note">Ostatnia kolumna: ile metrów ścieżki zajmuje tyle samo czasu, co 100 m tego terenu.</p>
+
+  <h2>Przewyższenia</h2>
+  <ul>
+    <li>1 m w górę liczy się jak <b><span data-climb></span> m po płaskim w tym samym terenie</b>. Podejście w średniej zieleni
+        kosztuje więc tyle, co <span data-climb></span> m średniej zieleni, nie białego lasu.</li>
+    <li>Z obrazu mapy nie widać, po której stronie warstwicy jest góra. Dlatego każda przecięta warstwica liczy się jako
+        <b>pół cięcia warstwicowego w górę</b>. Do porównania wariantów to wystarcza: różnica wysokości między startem
+        a celem jest dla każdej drogi ta sama, więc mniej przecięć oznacza dokładnie o tyle mniej podejść.</li>
+    <li>Zbiegi nie dają premii ani kary.</li>
+    <li>Przykład: cięcie 5 m, biały las. Jedna warstwica to 2,5 m w górę, czyli <span data-climb></span> × 2,5 = 15 m lasu więcej.</li>
+  </ul>
+
+  <h2>Jak czytana jest zieleń</h2>
+  <ul>
+    <li>Odcień ocenia się względem najciemniejszej zieleni na mapie, którą silnik przyjmuje za pełną (100%).
+        Poniżej ok. 8% tej wartości to biały las, do 36% jasna zieleń, do 75% średnia, wyżej ciemna.</li>
+    <li>Kolor jest uśredniany z małego otoczenia, więc pionowe paski podszytu wychodzą jako jaśniejszy odcień,
+        a nie jako ciemne kreski na białym.</li>
+    <li>Małe zielone znaki (× wykrot, ○ drzewo) są wycinane i nie spowalniają.</li>
+    <li>Na mapie bez ani jednego ciemnozielonego elementu odcienie mogą wyjść o stopień za ciemne.</li>
+  </ul>
+
+  <h2>Rodzaj mapy</h2>
+  <ul>
+    <li><b>Leśna:</b> cienka czarna linia to ścieżka (×1), gruba czarna plama to budynek.</li>
+    <li><b>Sprint:</b> każda czarna linia to mur lub płot nie do przejścia, a ciemna zieleń jest zakazana.</li>
+  </ul>
+
+  <h2>Drugi wariant</h2>
+  <ul>
+    <li>Silnik szuka go, „zniechęcając” się do środkowej części najlepszej trasy (teren w jej pobliżu liczy trzy razy drożej).</li>
+    <li>Pokazuje go tylko wtedy, gdy przynajmniej w połowie biegnie inaczej i nie jest wolniejszy o więcej niż 50%.</li>
+  </ul>
+
+  <h2>Czego silnik nie wie</h2>
+  <ul>
+    <li>Czy czarna linia na mapie leśnej to ścieżka, skała, płot czy linia energetyczna. Wszystkie traktuje jak ścieżkę.</li>
+    <li>Jaka jest jakość ścieżki: droga, dukt i ledwie widoczna ścieżka mają ten sam mnożnik.</li>
+    <li>Jakie jest podłoże, pora roku i Twoja forma. Mnożniki są stałe i takie same dla każdego.</li>
+    <li>Że pod górę w gęstym biegnie się jeszcze wolniej, niż wynika z samego mnożenia.</li>
+  </ul>
+</main>
+
 <footer>To pomoc treningowa. Na zawodach korzystanie z nawigacji jest zabronione.</footer>
 
 <script>
   (function () {
+    const TABS = ['live', 'routes', 'info'];
     const show = (name) => {
-      for (const t of ['live', 'routes']) {
+      for (const t of TABS) {
         document.getElementById('tab-' + t).hidden = t !== name;
         document.getElementById('tabbtn-' + t).classList.toggle('on', t === name);
       }
@@ -280,12 +359,13 @@
     };
     for (const b of document.querySelectorAll('nav button')) b.addEventListener('click', () => show(b.dataset.tab));
     let start = 'live';
-    try { start = localStorage.getItem('bno-tab') === 'routes' ? 'routes' : 'live'; } catch (e) { /* jw. */ }
+    try { const saved = localStorage.getItem('bno-tab'); if (TABS.includes(saved)) start = saved; } catch (e) { /* jw. */ }
     show(start);
   })();
 </script>
 <script src="../geo.js"></script>
 <script src="../core.js"></script>
+<script src="../info.js"></script>
 <script src="../live.js"></script>
 <script src="../app.js"></script>
 <script>
@@ -294,7 +374,7 @@ window.onerror = (m) => { document.title = 'FAIL ' + m; };
   const $ = (id) => document.getElementById(id);
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   $('tabbtn-routes').click();
-  if (location.hash.includes('s')) $('spanm').value = '2335';
+  if (location.hash.includes('s')) $('dpi').value = '254'; // 1:10 000 przy 254 DPI = 1 m na piksel pliku
   const blob = await (await fetch('../przyklad-mapa.png')).blob();
   const dt = new DataTransfer(); dt.items.add(new File([blob], 'przyklad-mapa.png', { type: 'image/png' }));
   $('file').files = dt.files; $('file').dispatchEvent(new Event('change'));
