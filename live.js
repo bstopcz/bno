@@ -18,7 +18,7 @@
 
   const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
   const el = {};
-  for (const [name, tag] of [['track', 'polyline'], ['alt', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
+  for (const [name, tag] of [['course', 'g'], ['track', 'polyline'], ['alt', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
     ['draw', 'polyline'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
     el[name] = document.createElementNS(SVG, tag);
     el[name].setAttribute('class', 'l-' + name);
@@ -26,6 +26,7 @@
   }
 
   let W = 0, H = 0, mapKey = null, mapName = '';
+  let mapScale = 0;                     // mianownik skali mapy (0 = nieznany)
   let mapImage = null;                  // adres obrazu wyrenderowanego z PDF-a (do pobrania przez admina)
   let locked = false;                   // mapa treningu: kalibracja jest gotowa i uczestnik jej nie zmienia
   let s = 1, ox = 0, oy = 0;           // ekran = mapa * s + (ox, oy)
@@ -114,6 +115,7 @@
       el.alt.setAttribute('stroke-dasharray', `${9 * u} ${7 * u}`);
     }
 
+    drawCourse(u);
     const pos = position();
     for (const k of ['dot', 'acc', 'head', 'track']) el[k].style.display = pos ? '' : 'none';
     if (!pos) return;
@@ -186,9 +188,57 @@
   let courses = [];        // trasy treningu: [{ name, points: [{ x, y, type, code }] }] w pikselach obrazu
   let courseFile = null;   // trasy wczytane z pliku (pozycje na świecie albo na mapie), czekające na przeliczenie
 
+  // Wybrana trasa rysowana na mapie jak nadruk: trójkąt startu, kółka z numerami, podwójne kółko mety i linie.
+  // Kółko ma rozmiar jak na wydruku (średnica 6 mm w skali mapy). Zaliczone punkty i odcinki są wyblakłe.
+  let courseRev = 0, courseSig = '';
+  function drawCourse(u) {
+    const sc = mapScale || ($('lmode').value === 'sprint' ? 4000 : 10000);
+    const R = !course ? 0 : cal ? 0.003 * sc * cal.pxPerM : Math.max(W, H) * 0.008;
+    el.course.setAttribute('stroke-width', Math.max(R * 0.12, 1.5 * u));
+    const sig = courseRev + ':' + courseAt + ':' + R.toFixed(2);
+    if (sig === courseSig) return;
+    courseSig = sig;
+    el.course.replaceChildren();
+    if (!course) return;
+    const add = (tag, attrs, dim, text) => {
+      const n = document.createElementNS(SVG, tag);
+      for (const k in attrs) n.setAttribute(k, typeof attrs[k] === 'number' ? attrs[k].toFixed(1) : attrs[k]);
+      if (dim) n.setAttribute('opacity', 0.35);
+      if (text != null) n.textContent = text;
+      el.course.append(n);
+    };
+    const rad = (p) => (p.type === 'start' ? R * 1.35 : p.type === 'meta' ? R * 1.17 : R);
+    const dir = (a, b) => Math.atan2(b.y - a.y, b.x - a.x);
+    let num = 0;
+    course.forEach((p, i) => {
+      const dim = i < courseAt, prev = course[i - 1], next = course[i + 1];
+      if (next) {
+        const d = Math.hypot(next.x - p.x, next.y - p.y), a = rad(p), b = rad(next);
+        if (d > a + b) add('line', { x1: p.x + (next.x - p.x) / d * a, y1: p.y + (next.y - p.y) / d * a, x2: next.x - (next.x - p.x) / d * b, y2: next.y - (next.y - p.y) / d * b }, dim);
+      }
+      if (p.type === 'start') {
+        const a0 = next ? dir(p, next) : -Math.PI / 2, r = rad(p);
+        add('polygon', { points: [0, 1, 2].map((k) => (p.x + Math.cos(a0 + k * 2.0944) * r).toFixed(1) + ',' + (p.y + Math.sin(a0 + k * 2.0944) * r).toFixed(1)).join(' ') }, dim);
+      } else if (p.type === 'meta') {
+        add('circle', { cx: p.x, cy: p.y, r: R * 0.83 }, dim); add('circle', { cx: p.x, cy: p.y, r: R * 1.17 }, dim);
+      } else {
+        add('circle', { cx: p.x, cy: p.y, r: R }, dim);
+        // numer stawiamy po tej stronie kółka, która jest najdalej od linii dochodzącej i odchodzącej
+        const taken = [prev && dir(p, prev), next && dir(p, next)].filter((v) => v != null && v !== undefined && v !== false);
+        let best = -Math.PI / 4, bs = -1;
+        for (let k = 0; k < 8; k++) {
+          const a = -Math.PI / 4 + k * Math.PI / 4;
+          const sc2 = taken.length ? Math.min(...taken.map((t) => Math.abs(Math.atan2(Math.sin(a - t), Math.cos(a - t))))) : 9;
+          if (sc2 > bs + 1e-6) { bs = sc2; best = a; }
+        }
+        add('text', { x: p.x + Math.cos(best) * R * 2, y: p.y + Math.sin(best) * R * 2, 'font-size': R * 1.5 }, dim, String(++num));
+      }
+    });
+  }
+
   function setCourse(points) {
     course = points && points.length ? points : null;
-    courseAt = -1;
+    courseAt = -1; courseRev++;
     showNext();
   }
   // Lista tras do wyboru; przy jednej trasie wybiera się sama.
@@ -208,6 +258,11 @@
     if (!courseFile) return '';
     const crsGeo = courseFile.geo && BnoAlign.detectCrs(courseFile.geo);
     let lost = 0;
+    // trasa bez startu albo bez mety zwykle oznacza, że w Course Setterze nie dodano ich do tej trasy
+    const gaps = courseFile.courses.map((c) => {
+      const miss = [c.controls[0].type !== 'start' && 'startu', c.controls[c.controls.length - 1].type !== 'meta' && 'mety'].filter(Boolean);
+      return miss.length ? `${c.name} nie ma ${miss.join(' ani ')}` : '';
+    }).filter(Boolean);
     const list = courseFile.courses.map((c) => ({
       name: c.name,
       points: c.controls.map((q) => {
@@ -223,7 +278,8 @@
     setCourses(list);
     if (!list.length) return '. UWAGA: żaden punkt trasy nie leży na tym obrazie mapy – sprawdź, czy plik trasy jest do tej mapy';
     return `. Trasy z pliku: ${list.map((c) => `${c.name} (${c.points.filter((p) => p.type === 'punkt').length} pkt)`).join(', ')}`
-      + (lost ? `; ${lost} pozycji poza obrazem pominięto` : '') + (courseFile.notes.length ? '. ' + courseFile.notes.join(' ') : '');
+      + (lost ? `; ${lost} pozycji poza obrazem pominięto` : '')
+      + (gaps.length ? `. UWAGA: trasa ${gaps.join(', trasa ')} – sprawdź w Course Setterze, czy tak ma być` : '') + (courseFile.notes.length ? '. ' + courseFile.notes.join(' ') : '');
   }
   function showNext() {
     const b = $('lnext'), n = course ? course.filter((p) => p.type !== 'start').length : 0;
@@ -333,6 +389,7 @@
     const a2 = BnoAlign.align(P, { cat: cats(fine.cls), w: fine.w, h: fine.h, mm: 1 / fine.k }, [a1.scale]);
     if (!exact && a2 && a2.score >= a1.score - 0.05) { left = fine.bounds.x0 + a2.x; top = fine.bounds.y1 - a2.y; }
     const score = exact ? (a2 ? a2.score : 0) : a2 ? Math.max(a1.score, a2.score) : a1.score;
+    mapScale = map.geo.scale;
     ocadCtx = { map, setId, region: { x0: left, x1: left + W * mmImg, y0: top - H * mmImg, y1: top } };
     proc = null;
     ensureProc();
@@ -364,7 +421,7 @@
       svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
-      mapImage = opts.image || null;
+      mapImage = opts.image || null; mapScale = +opts.scale || 0;
       ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
       if (opts.grid) loadGrid(opts.grid);
       setCourses(opts.courses || []);
@@ -409,7 +466,7 @@
     state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName, courses: courses.map((c) => c.name) }),
     openTraining(t) {
       say('Pobieram mapę treningu…');
-      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka,
+      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka, scale: t.skala,
         courses: Array.isArray(t.trasy) ? t.trasy.map((c) => ({ name: c.nazwa, points: (c.punkty || []).map((p) => ({ x: +p.px, y: +p.py, type: p.typ, code: p.kod })) })) : [] });
     },
   };

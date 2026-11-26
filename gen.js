@@ -81,6 +81,10 @@
       box.append(list);
       out.value = json;
       $('gcopy').hidden = false;
+      for (const t of pack.entry.trasy || []) {
+        const miss = [t.punkty[0].typ !== 'start' && 'startu', t.punkty[t.punkty.length - 1].typ !== 'meta' && 'mety'].filter(Boolean);
+        if (miss.length) list.textContent += ` Uwaga: trasa ${t.nazwa} nie ma ${miss.join(' ani ')}.`;
+      }
       if (!pack.entry.trasy) list.textContent += ' Uwaga: paczka nie zawiera trasy (nie dołączono pliku trasy), więc uczestnik nie dostanie przycisku „Następny punkt”.';
     } catch (err) {
       out.value = err.message;

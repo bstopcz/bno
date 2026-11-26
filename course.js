@@ -103,7 +103,7 @@
       if (list.some((p) => p.type === 'punkt')) courses.push({ name: fields[0] || 'Trasa ' + (courses.length + 1), controls: list });
     }
     if (!courses.length) throw new Error('Nie udało się odczytać tras z pliku projektu OCAD (trasy są, ale nie umiem powiązać ich punktów z pozycjami). Wyeksportuj trasy jako IOF XML 3.0.');
-    return { courses, geo, notes: ['Trasy odczytane wprost z pliku projektu OCAD. Ten sposób nie był sprawdzony na wielu plikach – obejrzyj punkty na mapie przed publikacją.'] };
+    return { courses, geo, notes: ['Trasy odczytane z pliku projektu tras OCAD – obejrzyj punkty na mapie przed publikacją.'] };
   }
 
   // Czy plik .ocd jest projektem tras (a nie mapą)?

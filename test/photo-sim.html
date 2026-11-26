@@ -97,6 +97,8 @@
   .l-route { fill: none; stroke: #e53935; stroke-linejoin: round; stroke-linecap: round; opacity: 0.9; }
   .l-alt { fill: none; stroke: #1565c0; stroke-linejoin: round; opacity: 0.9; }
   .l-target { fill: none; stroke: #a000c8; }
+  .l-course { fill: none; stroke: #a000c8; opacity: 0.85; }
+  .l-course text { fill: #a000c8; stroke: none; font-family: Arial, sans-serif; font-weight: bold; text-anchor: middle; dominant-baseline: central; }
   .l-draw { fill: none; stroke: #e53935; stroke-linejoin: round; stroke-linecap: round; opacity: 0.8; }
   .l-cals circle { fill: rgba(255,255,255,0.6); stroke: #a000c8; }
   .l-pend { fill: none; stroke: #e53935; }
@@ -466,11 +468,14 @@
     <li><b>Plik mapy <code>.ocd</code></b> – ten, z którego drukujesz mapę. Z niego brany jest teren (co jest ścieżką,
         płotem, budynkiem, terenem zakazanym), warstwice, skala i położenie mapy na świecie.</li>
     <li><b>Obraz tej samej mapy</b> – to, co zobaczy uczestnik. W OCAD-zie: <i>Plik → Eksport</i> i wybierz PDF albo JPG.
-        Eksportuj w skali mapy, w co najmniej 300 dpi, bez obracania. Może to być wycinek mapy (np. jeden arkusz A4).</li>
-    <li><b>Plik trasy</b> z OCAD Course Setting. Najpewniej: <i>Układanie tras → Eksport → Trasy (IOF XML 3.0)</i>,
-        czyli plik <code>.xml</code> z punktami i kolejnością na każdej trasie (taki sam eksport mają Purple Pen i Condes).
-        Można też dołączyć sam plik projektu tras <code>.ocd</code>. Dzięki trasie uczestnik dostaje przycisk „Następny punkt”,
-        a gdy tras jest kilka, wybiera swoją z listy. Trasa musi być też widoczna na eksportowanym obrazie mapy.</li>
+        Eksportuj w skali mapy, w co najmniej 300 dpi, bez obracania. Może to być wycinek mapy (np. jeden arkusz A4).
+        Eksportuj <b>czystą mapę, bez nadruku tras</b> – punkty wybranej trasy apka rysuje sama.</li>
+    <li><b>Plik tras</b> – projekt tras <code>.ocd</code> zapisany w OCAD Course Setting. Trasy muszą być ułożone
+        <b>na tej samej mapie</b>: plik mapy z punktu 1 ma być podkładem projektu tras. Każda trasa powinna mieć start i metę
+        (generator ostrzeże, gdy ich brakuje). Wszystkie trasy z pliku trafiają do treningu: uczestnik wybiera swoją z listy,
+        apka rysuje ją na mapie (trójkąt startu, kółka z numerami, meta) i daje przycisk „Następny punkt”.
+        Zamiast projektu tras można dołączyć eksport <i>Trasy (IOF XML 3.0)</i>, czyli plik <code>.xml</code> – ta droga
+        nie była jeszcze sprawdzona na pliku z OCAD-a.</li>
     <li><b>Opcjonalnie plik georeferencji obrazu</b> (<code>.jgw</code> do JPG, <code>.pgw</code> do PNG). OCAD zapisuje go
         obok obrazu, gdy przy eksporcie zaznaczysz tworzenie pliku World. Z nim obraz jest osadzany co do piksela;
         bez niego apka sama dopasowuje obraz do mapy z OCAD-a.</li>
@@ -480,7 +485,7 @@
 
   <h2>Krok 2. Wczytaj pliki</h2>
   <p>Kliknij przycisk i zaznacz <b>wszystkie pliki naraz</b> (przytrzymaj Ctrl): mapę <code>.ocd</code>, obraz lub PDF,
-     plik trasy (<code>.xml</code> albo projekt tras <code>.ocd</code>) i ewentualnie plik georeferencji.
+     plik tras (projekt tras <code>.ocd</code> albo <code>.xml</code>) i ewentualnie plik georeferencji.
      Przeliczenie trwa kilkanaście sekund.</p>
   <label class="pick">Wybierz pliki: mapa OCAD + obraz/PDF + trasa
     <input id="gfile" type="file" multiple accept="image/*,application/pdf,.pdf,.ocd,.xml,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld">
@@ -531,7 +536,7 @@
     <h2>Krok 5. Przekaż do publikacji</h2>
     <ol>
       <li>Pobierz plik <b>ZIP</b>. Jest w nim wszystko, czego potrzeba: obraz mapy (<code>.jpg</code>), siatka terenu
-          (<code>.siatka.png</code>) i wpis treningu (<code>.json</code>) z nazwą, opisem, dojazdem i kalibracją.</li>
+          (<code>.siatka.png</code>) i wpis treningu (<code>.json</code>) z nazwą, opisem, dojazdem, kalibracją i trasami.</li>
       <li>Przekaż ten jeden plik osobie, która publikuje stronę (albo zapisz go w folderze <code>treningi/mapytrening</code> projektu).
           Ona rozpakowuje go do folderu <code>treningi</code> i dopisuje wpis do <code>treningi/treningi.json</code>.</li>
       <li>Po opublikowaniu trening pojawi się w zakładce „Treningi”. Uczestnik dostaje gotowy obraz, teren i kalibrację –
