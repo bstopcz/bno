@@ -12,6 +12,7 @@
 
   let photo = null, pixels = null, classView = null, cost = null, contour = null;
   let srcImg = null, hiPixels = null; // oryginalny obraz i jego większa wersja do analizy linii
+  let ocad = null; // wczytany plik OCAD: { map, name, grid }; wtedy teren bierzemy z symboli, nie z obrazu
   let natW = 0; // szerokość oryginalnego pliku w pikselach (do przeliczenia skali)
   let W = 0, H = 0, zoom = 1;
   let points = [], legs = [];
@@ -31,6 +32,7 @@
 
   // Rozpoznaje teren w wybranym trybie i przelicza już postawione przebiegi.
   function analyze() {
+    if (ocad) { analyzeOcad(); return; }
     if (hiPixels === undefined) {
       hiPixels = null;
       const kh = Math.min(1, HI_DIM / Math.max(srcImg.naturalWidth, srcImg.naturalHeight));
@@ -43,8 +45,12 @@
       }
     }
     const res = analyzeMap(pixels, W, H, $('mode').value, hiPixels);
-    const cls = res.cls, features = res.features;
-    contour = res.contour;
+    finish(res.cls, res.contour, res.features);
+  }
+
+  // Wspólne zakończenie analizy (z obrazu albo z pliku OCAD): koszty, widok "co widzę", przebiegi.
+  function finish(cls, contourMask, features) {
+    contour = contourMask;
     cost = costGrid(cls);
     const out = new ImageData(W, H);
     for (let i = 0; i < cls.length; i++) {
@@ -111,10 +117,15 @@
 
   // Skala mapy + DPI pliku -> ile metrów terenu ma jeden piksel analizy.
   const num = (id) => parseFloat(String($(id).value).replace(',', '.'));
-  const hasScale = () => num('scale') > 0 && num('dpi') > 0 && W > 0;
-  const metersPerPx = () => num('scale') * 0.0254 / num('dpi') * natW / W;
+  const hasScale = () => !!ocad || (num('scale') > 0 && num('dpi') > 0 && W > 0);
+  const metersPerPx = () => (ocad ? ocad.grid.mpp : num('scale') * 0.0254 / num('dpi') * natW / W);
 
   function showScale() {
+    if (ocad) {
+      $('scaleinfo').textContent = `Plik OCAD, zestaw symboli: ${ocad.grid.setName}, skala 1:${Math.round(ocad.grid.scale)}. `
+        + `Jedno pole siatki to ${ocad.grid.mpp.toFixed(2).replace('.', ',')} m, mapa obejmuje ok. ${Math.round(ocad.grid.mpp * W / 10) * 10} × ${Math.round(ocad.grid.mpp * H / 10) * 10} m.`;
+      return;
+    }
     $('scaleinfo').textContent = hasScale()
       ? `Przy tej skali i DPI plik obejmuje ok. ${Math.round(metersPerPx() * W / 10) * 10} × ${Math.round(metersPerPx() * H / 10) * 10} m terenu. Jeśli to się nie zgadza z mapą, popraw DPI.`
       : '';
@@ -143,6 +154,20 @@
     if (!file || busy) return;
     status('Wczytuję zdjęcie…');
     try {
+      if (/\.ocd$/i.test(file.name)) {
+        ocad = { map: BnoOcad.parse(await file.arrayBuffer()), name: file.name, grid: null };
+        pixels = null; srcImg = null; points = [];
+        photo = document.createElement('canvas'); classView = document.createElement('canvas');
+        $('tools').hidden = false;
+        for (const id of ['mode', 'scale', 'dpi']) $(id).closest('label').hidden = true; // przy OCAD-zie znamy to z pliku
+        runBusy('Czytam plik OCAD…', () => {
+          analyze();
+          if (!ocad.map.tested) status('Uwaga: plik w wersji OCAD ' + ocad.map.version + ', której czytnik nie był testowany. Sprawdź wynik w „Pokaż co widzę”.');
+        });
+        return;
+      }
+      ocad = null; $('ocadsyms').hidden = true;
+      for (const id of ['mode', 'scale', 'dpi']) $(id).closest('label').hidden = false;
       const opened = await BnoFile.open(file); // PDF jest tu zamieniany na obraz
       const dpi = opened.pdf ? opened.dpi : readDpi(await file.arrayBuffer());
       if (dpi >= 100 && dpi <= 1200) $('dpi').value = Math.round(dpi); // 72/96 to zwykle wartość domyślna, nie prawdziwa
@@ -171,8 +196,57 @@
 
   for (const id of ['mode', 'contour', 'scale', 'dpi']) {
     $(id).addEventListener('change', () => {
-      if (pixels && !busy) runBusy('Analizuję mapę…', analyze);
+      if ((pixels || ocad) && !busy) runBusy('Analizuję mapę…', analyze);
     });
+  }
+
+  // ---------- plik OCAD: teren prosto z symboli ----------
+  const SYM = BnoSymbols;
+  const overrideKey = (grid) => 'bno-sym:' + grid.set;
+  const loadOverrides = (setId) => { try { return JSON.parse(localStorage.getItem('bno-sym:' + setId)) || {}; } catch (err) { return {}; } };
+
+  function analyzeOcad() {
+    const setId = SYM.detectSet(ocad.map);
+    const grid = SYM.build(ocad.map, MAX_DIM, loadOverrides(setId), setId);
+    ocad.grid = grid;
+    W = grid.w; H = grid.h;
+    for (const c of [photo, classView, canvas]) { c.width = W; c.height = H; }
+    finish(grid.cls, grid.contour, []);
+    photo.getContext('2d').drawImage(classView, 0, 0); // przy pliku OCAD "zdjęciem" jest schemat terenu
+    renderSymbols();
+  }
+
+  // Tabela symboli z pliku: co to za symbol, ile ma obiektów i jak został potraktowany. Admin może to zmienić.
+  function renderSymbols() {
+    const box = $('ocadsyms'), body = $('ocadsymrows');
+    box.hidden = false;
+    body.replaceChildren();
+    const kinds = Object.keys(SYM.KIND_NAMES);
+    let unknown = 0;
+    for (const u of ocad.grid.used) {
+      if (u.sym.type !== 2 && u.sym.type !== 3 && u.kind === 'ignore') continue; // symbole punktowe i tekst bez wpływu na bieg
+      const tr = document.createElement('tr');
+      if (u.kind === 'ignore') { tr.className = 'blocked'; unknown++; }
+      const cell = (text) => { const td = document.createElement('td'); td.textContent = text; tr.append(td); return td; };
+      cell(String(u.sym.num / 1000));
+      cell(u.sym.name || '—').style.textAlign = 'left';
+      cell(u.sym.type === 3 ? 'powierzchnia' : u.sym.type === 2 ? 'linia' : 'punkt');
+      cell(String(u.count));
+      const td = document.createElement('td'), sel = document.createElement('select');
+      for (const k of kinds) { const o = document.createElement('option'); o.value = k; o.textContent = SYM.KIND_NAMES[k] + (k === u.auto ? ' (domyślnie)' : ''); sel.append(o); }
+      sel.value = u.kind;
+      sel.setAttribute('aria-label', 'Jak traktować symbol ' + u.sym.num / 1000);
+      sel.addEventListener('change', () => {
+        const all = loadOverrides(ocad.grid.set);
+        if (sel.value === u.auto) delete all[u.sym.num]; else all[u.sym.num] = sel.value;
+        try { localStorage.setItem(overrideKey(ocad.grid), JSON.stringify(all)); } catch (err) { /* zmiana zadziała do odświeżenia */ }
+        if (!busy) runBusy('Przeliczam teren…', analyze);
+      });
+      td.append(sel); tr.append(td);
+      body.append(tr);
+    }
+    $('ocadsymnote').textContent = `Symbole liniowe i powierzchniowe użyte na mapie: ${body.children.length}. Pomijanych (szare wiersze): ${unknown}. `
+      + 'Zmiana w ostatniej kolumnie od razu przelicza teren i zapamiętuje się dla tego zestawu symboli.';
   }
 
   canvas.addEventListener('click', (e) => {

@@ -146,6 +146,9 @@
   tbody tr:last-child td { border-bottom: 0; }
   td i { display: inline-block; width: 14px; height: 14px; margin-right: 8px; border: 1px solid var(--muted); border-radius: 3px; vertical-align: -2px; }
   tr.blocked td { color: var(--muted); }
+  #ocadsyms td:first-child { white-space: nowrap; }
+  #ocadsyms td select { min-height: 36px; padding: 6px 8px; max-width: 220px; }
+  #ocadsyms .tablewrap { margin-bottom: 14px; }
   @media (max-width: 560px) { /* na telefonie zostają trzy kolumny, żeby nazwy terenu się mieściły */
     th:nth-child(4), td:nth-child(4), .note { display: none; }
   }
@@ -301,8 +304,8 @@
 </main>
 
 <main id="tab-routes" hidden>
-  <label class="pick">Wybierz plik mapy (JPG / PNG / PDF)
-    <input id="file" type="file" accept="image/*,application/pdf,.pdf">
+  <label class="pick">Wybierz plik mapy (OCAD / PDF / JPG / PNG)
+    <input id="file" type="file" accept="image/*,application/pdf,.pdf,.ocd">
   </label>
   <label class="mode">Rodzaj mapy:
     <select id="mode">
@@ -342,6 +345,16 @@
   <div id="legend" hidden></div>
   <div id="wrap"><canvas id="map"></canvas></div>
   <div id="info"></div>
+  <details id="ocadsyms" hidden>
+    <summary>Symbole z pliku OCAD</summary>
+    <p id="ocadsymnote"></p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Nr</th><th>Nazwa w pliku</th><th>Typ</th><th>Obiektów</th><th>Traktowany jako</th></tr></thead>
+        <tbody id="ocadsymrows"></tbody>
+      </table>
+    </div>
+  </details>
 </main>
 
 <main id="tab-info" hidden>
@@ -438,6 +451,8 @@
 <script src="../mapfile.js"></script>
 <script src="../lines.js"></script>
 <script src="../core.js"></script>
+<script src="../ocad.js"></script>
+<script src="../symbols.js"></script>
 <script src="../info.js"></script>
 <script src="../live.js"></script>
 <script src="../treningi.js"></script>

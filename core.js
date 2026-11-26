@@ -8,6 +8,9 @@
     FOREST: 0, OPEN: 1, PATH: 2, PAVED: 3, GREEN1: 4, GREEN2: 5, GREEN3: 6,
     WATER: 7, FORBIDDEN: 8, BUILDING: 9, OVERLAY: 10, PURPLE: 11,
     LAKE: 12, OOB: 13, WALL: 14, IMPVEG: 15, BROWN: 16, FENCE: 17,
+    // klasy dostępne tylko przy czytaniu pliku OCAD (z obrazu nie da się ich odróżnić)
+    ROUGH: 18, PATH2: 19, PATH3: 20, PATH4: 21, UNDER1: 22, UNDER2: 23, MARSH: 24, STONY: 25, OBST: 26, CULT: 27, CLIFF: 28,
+    STREAM: 29, DITCH: 30, BOULDERS: 31,
   };
   const X = Infinity; // nie do przejścia
 
@@ -31,6 +34,20 @@
     { name: 'zieleń nie do przejścia (sprint)', cost: X, rgb: [0, 90, 30] },
     { name: 'brąz', cost: 1.6, rgb: [200, 110, 40], internal: true },
     { name: 'płot / murek do przejścia', cost: 12, rgb: [240, 120, 0] },
+    { name: 'teren otwarty nierówny lub z drzewami', cost: 1.45, rgb: [255, 226, 150], ocad: true },
+    { name: 'ścieżka', cost: 1.1, rgb: [45, 45, 45], ocad: true },
+    { name: 'mała ścieżka', cost: 1.25, rgb: [85, 85, 85], ocad: true },
+    { name: 'ścieżka słabo widoczna / przecinka', cost: 1.45, rgb: [135, 135, 135], ocad: true },
+    { name: 'podszyt: wolny bieg', cost: 2.0, rgb: [215, 240, 175], ocad: true },
+    { name: 'podszyt: marsz', cost: 3.0, rgb: [170, 220, 125], ocad: true },
+    { name: 'bagno', cost: 2.6, rgb: [150, 205, 240], ocad: true },
+    { name: 'teren kamienisty / nierówny', cost: 2.2, rgb: [205, 205, 200], ocad: true },
+    { name: 'skarpa, rów lub skałka do przejścia', cost: 8, rgb: [150, 90, 60], ocad: true },
+    { name: 'pole uprawne / sad', cost: 1.5, rgb: [255, 214, 100], ocad: true },
+    { name: 'skała nie do przejścia', cost: X, rgb: [70, 0, 0], ocad: true },
+    { name: 'strumień / rów z wodą', cost: 5, rgb: [80, 160, 245], ocad: true },
+    { name: 'mały rów / ciek okresowy', cost: 2.2, rgb: [150, 200, 250], ocad: true },
+    { name: 'rumowisko / pole głazów', cost: 3.5, rgb: [170, 170, 165], ocad: true },
   ];
 
   // Symbole punktowe rozpoznawane po kolorze i kształcie.

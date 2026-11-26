@@ -190,6 +190,54 @@ print('OK', {
   print('OK przewyższenia');
 }
 
+// --- mapa z pliku OCAD: symbole -> siatka terenu (tylko w przeglądarce, bo rysowanie używa canvas) ---
+if (typeof document !== 'undefined') {
+  const sym = (num, type, name, lineWidth) => ({ num: num * 1000, type, name, lineWidth: lineWidth || 0, hidden: false });
+  const symbols = new Map([[101, 2], [301, 3], [401, 3], [408, 3], [505, 2], [518, 2], [519, 1], [520, 3], [521, 3], [601, 2]]
+    .map(([n, t]) => [n * 1000, sym(n, t, 'symbol ' + n, t === 2 ? 0.25 : 0)]));
+  const rect = (x0, y0, x1, y1) => [x0, y0, x1, y0, x1, y1, x0, y1];
+  const map = {
+    geo: { scale: 10000 }, symbols,
+    objects: [
+      { sym: 401000, type: 3, rings: [rect(0, 0, 200, 150)] },                          // otwarte na całej mapie
+      { sym: 408000, type: 3, rings: [rect(20, 100, 60, 140)] },                        // zielony średni
+      { sym: 301000, type: 3, rings: [rect(120, 90, 180, 140), rect(140, 105, 160, 125)] }, // jezioro z wyspą (dziura)
+      { sym: 520000, type: 3, rings: [rect(20, 20, 60, 60)] },                          // teren zakazany
+      { sym: 521000, type: 3, rings: [rect(30, 30, 40, 40)] },                          // budynek w zakazanym
+      { sym: 518000, type: 2, rings: [[110, 20, 190, 20, 190, 60, 110, 60, 110, 20]] }, // zamknięte ogrodzenie nie do przejścia
+      { sym: 519000, type: 1, rings: [[110, 40]] },                                     // punkt przejścia w ogrodzeniu
+      { sym: 505000, type: 2, rings: [[70, 40, 150, 40]] },                             // ścieżka przez punkt przejścia
+      { sym: 101000, type: 2, rings: [[0, 10, 200, 10]] },                              // warstwica
+      { sym: 601000, type: 2, rings: [[150, 0, 150, 150]] },                            // linia północy: pomijana
+    ],
+  };
+  const g = BnoSymbols.build(map, 800);
+  assert.strictEqual(g.setName, 'ISOM 2017 (las)');
+  assert.ok(Math.abs(g.mpp - 10 * 204 / 800) < 0.01, 'metry na pole: ' + g.mpp);
+  const at = (x, y) => g.cls[Math.round((g.bounds.y1 - y) * g.k) * g.w + Math.round((x - g.bounds.x0) * g.k)];
+  assert.strictEqual(at(80, 20), T.OPEN);
+  assert.strictEqual(at(40, 120), T.GREEN2);
+  assert.strictEqual(at(130, 100), T.LAKE);
+  assert.strictEqual(at(150, 115), T.OPEN, 'wyspa na jeziorze');
+  assert.strictEqual(at(50, 50), T.FORBIDDEN);
+  assert.strictEqual(at(35, 35), T.BUILDING);
+  assert.strictEqual(at(110, 30), T.WALL);
+  assert.strictEqual(at(130, 40), T.PATH2);
+  assert.ok(at(110, 40) !== T.WALL, 'punkt przejścia otwiera płot');
+  assert.strictEqual(at(150, 70), T.OPEN, 'linia północy nie zmienia terenu');
+  assert.strictEqual(g.contour[Math.round((g.bounds.y1 - 10) * g.k) * g.w + 300], 1);
+  const px = (x, y) => ({ x: Math.round((x - g.bounds.x0) * g.k), y: Math.round((g.bounds.y1 - y) * g.k) });
+  const leg = routeLeg(costGrid(g.cls), g.w, g.h, px(80, 80), px(170, 50));
+  assert.ok(leg.best, 'jest wejście do ogrodzenia');
+  const gate = px(110, 40);
+  assert.ok(leg.best.path.some((i) => Math.abs(i % g.w - gate.x) < 12 && Math.abs(((i / g.w) | 0) - gate.y) < 12), 'trasa idzie przez punkt przejścia');
+  // ręczna zmiana: płot oznaczony jako "pomijany" przestaje blokować
+  const g2 = BnoSymbols.build(map, 800, { 518000: 'ignore' });
+  const leg2 = routeLeg(costGrid(g2.cls), g2.w, g2.h, px(80, 80), px(170, 50));
+  assert.ok(leg2.best.cost <= leg.best.cost + 0.01 && !g2.cls.includes(T.WALL), 'po zmianie płot znika z siatki');
+  print('OK OCAD -> siatka, m/pole', g.mpp.toFixed(2));
+}
+
 // --- okno wyszukiwania: krótki przebieg na dużej siatce nie przeszukuje całej mapy, a wynik jest ten sam ---
 {
   const GW = 3200, GH = 2400, g = new Float32Array(GW * GH).fill(1.6);

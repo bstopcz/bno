@@ -5,6 +5,12 @@
   const body = document.getElementById('speeds');
   for (const t of TERRAIN) {
     if (t.internal) continue;
+    if (t.ocad && !body.dataset.ocadHeader) { // klasy rozróżniane tylko przy czytaniu pliku OCAD
+      body.dataset.ocadHeader = '1';
+      const sep = document.createElement('tr'), th = document.createElement('th');
+      th.colSpan = 4; th.textContent = 'Tylko z pliku OCAD (z obrazu nie da się tego odróżnić)'; th.style.textAlign = 'left';
+      sep.append(th); body.append(sep);
+    }
     const tr = document.createElement('tr');
     const name = document.createElement('td'), sw = document.createElement('i');
     sw.style.background = `rgb(${t.rgb.join(',')})`;
