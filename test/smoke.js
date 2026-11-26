@@ -353,3 +353,31 @@ const big = new Float32Array(BW * BH).fill(1.6);
 const t1 = Date.now();
 routeLeg(big, BW, BH, { x: 10, y: 10 }, { x: 1590, y: 1190 });
 print('1600x1200 routeLeg ms:', Date.now() - t1);
+
+// własne tempo: mnożniki z pomiaru i przelicznik przewyższeń
+{
+  const S = BnoStore, TT = BnoCore.T;
+  S.resetPace(); S.setOn(true);
+  assert.strictEqual(S.costs(), null, 'bez danych liczymy standardowo');
+  S.addWindows([{ cls: TT.PATH, d: 400, t: 100, cross: 0 }, { cls: TT.FOREST, d: 250, t: 125, cross: 0 }, { cls: TT.GREEN1, d: 50, t: 60, cross: 0 }], 5);
+  const c = S.costs();
+  assert.strictEqual(c[TT.FOREST], 2, 'las: 0,5 s/m przy 0,25 s/m po ścieżce');
+  assert.strictEqual(c[TT.GREEN1], 2.2, 'za mało danych w zielonym: zostaje standard');
+  assert.strictEqual(c[TT.BUILDING], Infinity);
+  assert.strictEqual(S.climbFactor(), BnoCore.CLIMB_FACTOR);
+  S.addWindows([{ cls: TT.PATH, d: 200, t: 150, cross: 20 }], 5); // 50 m podejść kosztowało jak 400 m ścieżki
+  assert.strictEqual(S.climbFactor(), 8);
+  assert.strictEqual(BnoCore.costGrid(new Uint8Array([TT.FOREST, TT.PATH]), c)[0], 2);
+  S.setOn(false);
+  assert.strictEqual(S.costs(), null); assert.strictEqual(S.climbFactor(), BnoCore.CLIMB_FACTOR);
+  S.setOn(true);
+  const before = S.runs().length;
+  S.saveRun({ id: 1, key: 'test', track: [[52, 21, 0]], legs: [], total: 1000 });
+  const copy = S.exportAll();
+  S.deleteRun(1); S.resetPace();
+  assert.strictEqual(S.runs().length, before);
+  S.importAll(copy);
+  assert.strictEqual(S.runs().length, before + 1); assert.strictEqual(S.climbFactor(), 8, 'kopia przywraca tempo');
+  S.deleteRun(1); S.resetPace();
+  print('OK własne tempo i kopia zapasowa');
+}

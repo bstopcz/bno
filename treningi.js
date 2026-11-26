@@ -41,6 +41,18 @@
       window.scrollTo(0, 0);
     });
     c.append(open);
+    // mapę można zapisać w telefonie wcześniej (w domu, na Wi-Fi), żeby w lesie działała bez zasięgu
+    const files = [t.plik, t.siatka].filter(Boolean);
+    if (window.caches && location.protocol === 'https:') {
+      const off = el('button', null, 'Zapisz na telefon (offline)');
+      const mark = () => { off.textContent = 'Zapisany w telefonie ✓'; off.disabled = true; };
+      caches.open('bno-v1').then((store) => Promise.all(files.map((f) => store.match(f)))).then((hits) => { if (hits.every(Boolean)) mark(); }).catch(() => {});
+      off.addEventListener('click', () => {
+        off.textContent = 'Zapisuję…';
+        caches.open('bno-v1').then((store) => store.addAll(files)).then(mark).catch(() => { off.textContent = 'Nie udało się – sprawdź internet i spróbuj ponownie'; });
+      });
+      c.append(off);
+    }
     return c;
   }
 

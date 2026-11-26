@@ -590,9 +590,10 @@
     return analyze(data, w, h, mode).cls;
   }
 
-  function costGrid(cls) {
-    const cost = new Float32Array(cls.length);
-    for (let i = 0; i < cls.length; i++) cost[i] = TERRAIN[cls[i]].cost;
+  // table: opcjonalne własne mnożniki terenu (indeks = klasa), domyślnie te z TERRAIN
+  function costGrid(cls, table) {
+    const cost = new Float32Array(cls.length), t = table || TERRAIN.map((x) => x.cost);
+    for (let i = 0; i < cls.length; i++) cost[i] = t[cls[i]];
     return cost;
   }
 

@@ -15,6 +15,7 @@
   const LOST_FIXES = 3;    // tyle odczytów z rzędu daleko od oczekiwanego miejsca = szukamy na całej trasie
   const MINI_SPAN_M = 220; // tyle metrów terenu mieści się na szerokość minimapy w trybie kamery
   const CAM_HFOV = 55;     // przybliżony poziomy kąt widzenia kamery telefonu (pionowo)
+  const PUNCH_M = 10;      // tak blisko środka kółka punkt zalicza się sam (przy słabym GPS do 20 m)
 
   const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
   const el = {};
@@ -39,6 +40,10 @@
   let proc = null;                      // { k, w, h, cost } – teren do liczenia trasy
   let target = null, route = null, routes = [], routeAt = 0, routeNote = ''; // route = wybrany wariant
   let stream = null;
+  let rot = 0, viewRot = 0, rotOn = false; // obrót mapy na ekranie [rad]; viewRot = obrót aktualnego widoku (mapa albo minimapa)
+  let help = 'full', reveal = false;      // sposób prowadzenia; reveal = po biegu pokazujemy pozycję i ślad także w trybie samej mapy
+  let run = null, lastPunch = 0, shownRun = null, courseName = ''; // trwający bieg po trasie i oglądany zapisany przebieg
+  try { rotOn = localStorage.getItem('bno-rot') === '1'; const h = localStorage.getItem('bno-help'); if (h === 'dir' || h === 'map') help = h; } catch (err) { /* nieistotne */ }
 
   let sayHook = null; // zakładka "Generacja danych" podgląda komunikaty podczas przygotowania mapy
   const say = (text) => { $('lstatus').textContent = text; if (sayHook) sayHook(text); };
@@ -47,19 +52,21 @@
   function applyView() {
     if (stream) {
       // tryb kamery: minimapa wyśrodkowana na Tobie i obrócona tak, żeby "góra" była tam, gdzie patrzysz
-      const r = $('lmini').getBoundingClientRect(), pos = position();
+      const r = $('lmini').getBoundingClientRect(), pos = hidden() ? null : position();
+      viewRot = 0;
       if (pos) {
         vs = r.width / (MINI_SPAN_M * cal.pxPerM);
         let ang = 0;
         if (heading != null) { const v = headingVector(cal, heading); ang = Math.atan2(v.x, -v.y); }
+        viewRot = -ang;
         world.style.transform = `translate(${r.width / 2}px, ${r.height * 0.62}px) rotate(${-ang}rad) scale(${vs}) translate(${-pos.x}px, ${-pos.y}px)`;
       } else {
         vs = Math.min(r.width / W, r.height / H);
         world.style.transform = `scale(${vs})`;
       }
     } else {
-      vs = s;
-      world.style.transform = `translate(${ox}px, ${oy}px) scale(${s})`;
+      vs = s; viewRot = rot;
+      world.style.transform = `translate(${ox}px, ${oy}px) rotate(${rot}rad) scale(${s})`;
     }
     drawMarkers();
   }
@@ -70,7 +77,7 @@
     if (!r.width || !r.height) { needFit = true; return; }
     needFit = false;
     s = Math.min(r.width / W, r.height / H);
-    ox = (r.width - W * s) / 2; oy = (r.height - H * s) / 2;
+    centerOn({ x: W / 2, y: H / 2 });
     applyView();
   }
 
@@ -78,6 +85,21 @@
     const ns = Math.min(12, Math.max(0.02, s * f));
     f = ns / s;
     ox = x - (x - ox) * f; oy = y - (y - oy) * f; s = ns;
+  }
+
+  // Obrót: ekran = R(rot) * (mapa * s) + (ox, oy). Mapa obraca się wokół środka ekranu.
+  const rotv = (x, y, a) => ({ x: x * Math.cos(a) - y * Math.sin(a), y: x * Math.sin(a) + y * Math.cos(a) });
+  const toMap = (p) => { const q = rotv(p.x - ox, p.y - oy, -rot); return { x: q.x / s, y: q.y / s }; };
+  function centerOn(m) {
+    const r = stage.getBoundingClientRect(), q = rotv(m.x * s, m.y * s, rot);
+    ox = r.width / 2 - q.x; oy = r.height / 2 - q.y;
+  }
+  function updateRot() { // "góra" ekranu = kierunek, w który patrzysz (gdy obrót jest włączony i działa kompas)
+    let a = 0;
+    if (rotOn && cal && heading != null) { const v = headingVector(cal, heading); a = -Math.atan2(v.x, -v.y); }
+    if (Math.abs(a - rot) < 1e-4) return;
+    const r = stage.getBoundingClientRect(), q = rotv(r.width / 2 - ox, r.height / 2 - oy, a - rot);
+    ox = r.width / 2 - q.x; oy = r.height / 2 - q.y; rot = a;
   }
 
   const position = () => (cal && fix ? toPixel(cal, fix.lat, fix.lon) : null);
@@ -116,15 +138,16 @@
     }
 
     drawCourse(u);
-    const pos = position();
-    for (const k of ['dot', 'acc', 'head', 'track']) el[k].style.display = pos ? '' : 'none';
+    const pos = hidden() ? null : position();
+    for (const k of ['dot', 'acc', 'head']) el[k].style.display = pos ? '' : 'none';
+    const showTrack = !!cal && track.length > 1 && !hidden();
+    el.track.style.display = showTrack ? '' : 'none';
+    if (showTrack) { el.track.setAttribute('points', fmt(track.map((t) => toPixel(cal, t.lat, t.lon)))); el.track.setAttribute('stroke-width', 2.5 * u); }
     if (!pos) return;
     el.dot.setAttribute('cx', pos.x); el.dot.setAttribute('cy', pos.y);
     el.dot.setAttribute('r', 8 * u); el.dot.setAttribute('stroke-width', 3 * u);
     el.acc.setAttribute('cx', pos.x); el.acc.setAttribute('cy', pos.y);
     el.acc.setAttribute('r', Math.max(8 * u, fix.acc * cal.pxPerM));
-    el.track.setAttribute('points', fmt(track.map((t) => toPixel(cal, t.lat, t.lon))));
-    el.track.setAttribute('stroke-width', 2.5 * u);
     if (heading == null) { el.head.style.display = 'none'; return; }
     const v = headingVector(cal, heading), a = 12 * u, b = 30 * u, c = 9 * u;
     el.head.setAttribute('points', fmt([
@@ -136,10 +159,8 @@
 
   function refresh() {
     const pos = position();
-    if (follow && pos && W) {
-      const r = stage.getBoundingClientRect();
-      ox = r.width / 2 - pos.x * s; oy = r.height / 2 - pos.y * s;
-    }
+    updateRot();
+    if (follow && pos && W && !hidden()) centerOn(pos);
     maybeReroute();
     applyView();
     describe();
@@ -195,7 +216,7 @@
     const sc = mapScale || ($('lmode').value === 'sprint' ? 4000 : 10000);
     const R = !course ? 0 : cal ? 0.003 * sc * cal.pxPerM : Math.max(W, H) * 0.008;
     el.course.setAttribute('stroke-width', Math.max(R * 0.12, 1.5 * u));
-    const sig = courseRev + ':' + courseAt + ':' + R.toFixed(2);
+    const sig = courseRev + ':' + courseAt + ':' + R.toFixed(2) + ':' + Math.round(viewRot * 12);
     if (sig === courseSig) return;
     courseSig = sig;
     el.course.replaceChildren();
@@ -231,13 +252,16 @@
           const sc2 = taken.length ? Math.min(...taken.map((t) => Math.abs(Math.atan2(Math.sin(a - t), Math.cos(a - t))))) : 9;
           if (sc2 > bs + 1e-6) { bs = sc2; best = a; }
         }
-        add('text', { x: p.x + Math.cos(best) * R * 2, y: p.y + Math.sin(best) * R * 2, 'font-size': R * 1.5 }, dim, String(++num));
+        const tx = p.x + Math.cos(best) * R * 2, ty = p.y + Math.sin(best) * R * 2; // numer zawsze prosto, także na obróconej mapie
+        add('text', { x: tx, y: ty, 'font-size': R * 1.5, transform: `rotate(${(-viewRot * 180 / Math.PI).toFixed(0)} ${tx.toFixed(1)} ${ty.toFixed(1)})` }, dim, String(++num));
       }
     });
   }
 
-  function setCourse(points) {
+  function setCourse(points, name) {
     course = points && points.length ? points : null;
+    courseName = name || '';
+    dropRun();
     courseAt = -1; courseRev++;
     showNext();
   }
@@ -248,9 +272,9 @@
     sel.replaceChildren();
     sel.hidden = courses.length < 2;
     courses.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `Trasa: ${c.name} (${c.points.filter((p) => p.type === 'punkt').length} pkt)`; sel.append(o); });
-    setCourse(courses.length ? courses[0].points : null);
+    setCourse(courses.length ? courses[0].points : null, courses.length ? courses[0].name : '');
   }
-  $('lcourse').addEventListener('change', () => { setCourse(courses[+$('lcourse').value].points); target = null; route = null; routes = []; refresh(); });
+  $('lcourse').addEventListener('change', () => { const c = courses[+$('lcourse').value]; setCourse(c.points, c.name); target = null; route = null; routes = []; refresh(); });
 
   // Przeliczenie tras z pliku na piksele obrazu: z pozycji na świecie (przez kalibrację) albo z pozycji na mapie
   // OCAD-a (gdy znamy położenie obrazu na tej mapie). Zwraca dopisek do komunikatu.
@@ -281,26 +305,6 @@
       + (lost ? `; ${lost} pozycji poza obrazem pominięto` : '')
       + (gaps.length ? `. UWAGA: trasa ${gaps.join(', trasa ')} – sprawdź w Course Setterze, czy tak ma być` : '') + (courseFile.notes.length ? '. ' + courseFile.notes.join(' ') : '');
   }
-  function showNext() {
-    const b = $('lnext'), n = course ? course.filter((p) => p.type !== 'start').length : 0;
-    b.hidden = !course;
-    if (!course) return;
-    const done = course.slice(0, courseAt + 1).filter((p) => p.type !== 'start').length;
-    b.textContent = courseAt >= course.length - 1 ? 'Trasa ukończona' : `Następny punkt (${done + 1}/${n})`;
-    b.disabled = courseAt >= course.length - 1;
-    $('larnext').textContent = b.textContent;
-  }
-  function nextControl() {
-    if (!course || courseAt >= course.length - 1) return;
-    courseAt++;
-    if (course[courseAt].type === 'start' && courseAt < course.length - 1) courseAt++; // ze startu od razu na pierwszy punkt
-    target = { x: course[courseAt].x, y: course[courseAt].y };
-    showNext();
-    setTapMode(null);
-    computeRoute();
-  }
-  $('lnext').addEventListener('click', nextControl);
-  $('larnext').addEventListener('click', nextControl);
 
   // Siatka terenu zapisana jako PNG (czerwony = kategoria, zielony = warstwica), przygotowana przez admina.
   function loadGrid(url) {
@@ -422,6 +426,7 @@
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
       mapImage = opts.image || null; mapScale = +opts.scale || 0;
+      reveal = false; shownRun = null; $('lresult').hidden = true;
       ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
       if (opts.grid) loadGrid(opts.grid);
       setCourses(opts.courses || []);
@@ -435,7 +440,7 @@
       $('lcaladd').hidden = locked; $('lcalclear').hidden = locked;
       $('ltitle').textContent = opts.title || '';
       setTapMode(null);
-      fitView(); describe(); guide();
+      fitView(); describe(); guide(); renderRuns();
       if (opts.world) attachWorld(opts.world);
       if (opts.ocad) {
         say('Dopasowuję obraz do mapy z pliku OCAD… (to może potrwać kilkanaście sekund)');
@@ -544,7 +549,7 @@
     if (ptrs.size === 1) { moved = 0; downAt = Date.now(); } else moved = 999;
     if (tapMode === 'draw' && ptrs.size === 1 && W) {
       const p = local(e);
-      strokes.push([{ x: (p.x - ox) / s, y: (p.y - oy) / s }]);
+      strokes.push([toMap(p)]);
     }
   });
   stage.addEventListener('pointermove', (e) => {
@@ -552,7 +557,7 @@
     const prev = ptrs.get(e.pointerId), now = local(e);
     if (ptrs.size === 1 && tapMode === 'draw') {
       // jeden palec rysuje, dwa palce przesuwają i powiększają mapę
-      const st = strokes[strokes.length - 1], q = { x: (now.x - ox) / s, y: (now.y - oy) / s };
+      const st = strokes[strokes.length - 1], q = toMap(now);
       if (st && Math.hypot(q.x - st[st.length - 1].x, q.y - st[st.length - 1].y) * s > 4) st.push(q);
       moved += Math.abs(now.x - prev.x) + Math.abs(now.y - prev.y);
     } else if (ptrs.size === 1) {
@@ -579,7 +584,7 @@
       drawMarkers();
       return;
     }
-    if (ptrs.size === 0 && moved < 8 && Date.now() - downAt < 600 && W) tap((p.x - ox) / s, (p.y - oy) / s);
+    if (ptrs.size === 0 && moved < 8 && Date.now() - downAt < 600 && W) { const m = toMap(p); tap(m.x, m.y); }
   });
   stage.addEventListener('pointercancel', (e) => ptrs.delete(e.pointerId));
   stage.addEventListener('wheel', (e) => {
@@ -677,12 +682,12 @@
   function ensureProc() {
     if (proc) return;
     if (gridCtx) { // trening z gotową siatką terenu: nic nie trzeba liczyć
-      proc = { k: gridCtx.w / W, w: gridCtx.w, h: gridCtx.h, cls: gridCtx.cls, cost: costGrid(gridCtx.cls), contour: gridCtx.contour };
+      proc = { k: gridCtx.w / W, w: gridCtx.w, h: gridCtx.h, cls: gridCtx.cls, cost: costGrid(gridCtx.cls, BnoStore.costs()), contour: gridCtx.contour };
       return;
     }
     if (ocadCtx) { // teren prosto z symboli OCAD-a, na siatce pokrywającej dokładnie wyświetlany obraz
       const grid = BnoSymbols.build(ocadCtx.map, PROC_DIM, symOverrides(ocadCtx.setId), ocadCtx.setId, ocadCtx.region);
-      proc = { k: grid.w / W, w: grid.w, h: grid.h, cls: grid.cls, cost: costGrid(grid.cls), contour: grid.contour };
+      proc = { k: grid.w / W, w: grid.w, h: grid.h, cls: grid.cls, cost: costGrid(grid.cls, BnoStore.costs()), contour: grid.contour };
       return;
     }
     const k = Math.min(1, PROC_DIM / Math.max(W, H));
@@ -701,7 +706,7 @@
       hi = { data: gh.getImageData(0, 0, ch.width, ch.height).data, w: ch.width, h: ch.height };
     }
     const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value, hi);
-    proc = { k, w, h, cls: res.cls, cost: costGrid(res.cls), contour: res.contour };
+    proc = { k, w, h, cls: res.cls, cost: costGrid(res.cls, BnoStore.costs()), contour: res.contour };
   }
 
   function toRoute(part) {
@@ -742,6 +747,7 @@
     route = null; routes = [];
     const pos = position();
     if (!target) { refresh(); return; }
+    if (help !== 'full') { routeNote = ''; refresh(); return; } // sam kierunek albo sama mapa: wariantu nie liczymy
     if (!pos) { routeNote = 'Cel ustawiony. Trasa policzy się, gdy będzie kalibracja i pozycja z GPS.'; refresh(); return; }
     if (pos.x < 0 || pos.y < 0 || pos.x >= W || pos.y >= H) { routeNote = 'Jesteś poza mapą – nie policzę trasy.'; refresh(); return; }
     routeNote = proc ? 'Liczę trasę…' : 'Liczę trasę… (pierwsza analiza mapy może potrwać kilkanaście sekund)';
@@ -752,10 +758,7 @@
         const clamp = (v, m) => Math.min(m - 1, Math.max(0, Math.round(v)));
         const a = { x: clamp(pos.x * proc.k, proc.w), y: clamp(pos.y * proc.k, proc.h) };
         const b = { x: clamp(target.x * proc.k, proc.w), y: clamp(target.y * proc.k, proc.h) };
-        // jedno przecięcie warstwicy = pół cięcia w górę = (cięcie / 2) * CLIMB_FACTOR metrów po płaskim
-        const interval = parseFloat($('lcontour').value);
-        const climb = interval > 0 ? { contour: proc.contour, perCrossing: interval / 2 * CLIMB_FACTOR * cal.pxPerM * proc.k } : null;
-        const leg = routeLeg(proc.cost, proc.w, proc.h, a, b, climb);
+        const leg = routeLeg(proc.cost, proc.w, proc.h, a, b, climbCfg());
         routeAt = Date.now();
         if (!leg.best) {
           routeNote = 'Nie znajduję przejścia do celu (teren nie do przejścia) – strzałka pokazuje kierunek na wprost.';
@@ -820,7 +823,7 @@
 
   // Zszedłeś z trasy -> liczymy nową od miejsca, w którym jesteś.
   function maybeReroute() {
-    if (route && route.custom) return; // własnej trasy nie poprawiamy
+    if (help !== 'full' || (route && route.custom)) return; // własnej trasy nie poprawiamy, a bez wariantu nie ma czego
     const pos = position();
     if (!target || !pos || routeNote.startsWith('Liczę trasę')) return;
     if (!route) { if (!routeAt || Date.now() - routeAt > 20000) { if (!routeAt) computeRoute(); } return; }
@@ -852,7 +855,7 @@
   // Dopiero gdy odejdziesz od linii dalej niż RETURN_M, strzałka prowadzi z powrotem na trasę.
   function guidance() {
     const pos = position();
-    if (!target || !pos) return null;
+    if (!target || !pos || hidden()) return null;
     const straight = Math.hypot(target.x - pos.x, target.y - pos.y) / cal.pxPerM;
     let from = pos, aim = target, dist = straight, off = 0, returning = false, blocked = false;
     if (route) {
@@ -893,15 +896,16 @@
         }
         if (g.returning) text += ` · wróć na trasę (${Math.round(g.off / 5) * 5} m obok)`;
         if (g.blocked) text += ' · między Tobą a trasą jest przeszkoda, obejdź ją';
-        if (!route) text += ' · brak trasy, kierunek prosto na cel';
+        if (!route && help === 'full') text += ' · brak trasy, kierunek prosto na cel';
         if (routeNote) text += ' · ' + routeNote;
       }
     } else if (!target && W) text = '';
+    if (hidden() && target) text = 'Sama mapa: znajdź punkt. Apka potwierdzi go sygnałem, gdy dobiegniesz.';
     $('lguide').textContent = text;
     $('lartext').textContent = text || 'Ustaw cel na mapie, żeby zobaczyć strzałkę.';
 
     drawGround(g); // wstęga trasy na ziemi i lampion przy celu
-    $('larnext').hidden = !(stream && course && g && g.arrived && courseAt < course.length - 1);
+    $('larnext').hidden = !(stream && course && g && g.arrived && (courseAt < course.length - 1 || run));
     const show = stream && rel != null && !(g && g.arrived);
     $('lararrow').hidden = !show || arMode === 'ribbon';
     $('larpin').hidden = true;
@@ -1075,6 +1079,308 @@
     if (!document.fullscreenElement && stage.classList.contains('full')) setFull(false); // wyjście gestem "wstecz"
   });
 
+  // ---------- sposób prowadzenia ----------
+  // full = wariant i strzałka po nim, dir = sam kierunek i odległość do punktu, map = sama mapa bez pozycji
+  function hidden() { return help === 'map' && !reveal; }
+  $('lhelp').value = help;
+  $('lhelp').addEventListener('change', () => {
+    help = $('lhelp').value;
+    try { localStorage.setItem('bno-help', help); } catch (err) { /* nieistotne */ }
+    route = null; routes = []; routeNote = '';
+    if (help === 'full' && target) computeRoute(); else refresh();
+  });
+
+  // ---------- obracanie mapy zgodnie z kierunkiem patrzenia ----------
+  const showRot = () => { $('lrot').textContent = rotOn ? 'Obrót mapy: wł.' : 'Obrót mapy: wył.'; $('lrot').classList.toggle('on', rotOn); };
+  showRot();
+  $('lrot').addEventListener('click', () => {
+    rotOn = !rotOn;
+    try { localStorage.setItem('bno-rot', rotOn ? '1' : '0'); } catch (err) { /* jw. */ }
+    if (rotOn) startCompass();
+    showRot(); refresh();
+  });
+
+  // ---------- sygnał zaliczenia punktu ----------
+  let audio = null;
+  function initSound() { // przeglądarka pozwala włączyć dźwięk tylko po dotknięciu ekranu
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume();
+    } catch (err) { /* zostaje wibracja */ }
+  }
+  function signal() {
+    try { if (navigator.vibrate) navigator.vibrate([150, 80, 150]); } catch (err) { /* brak wibracji */ }
+    if (!audio) return;
+    try {
+      [0, 0.18].forEach((d, i) => {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = i ? 1320 : 990; g.gain.value = 0.25;
+        o.connect(g); g.connect(audio.destination);
+        o.start(audio.currentTime + d); o.stop(audio.currentTime + d + 0.14);
+      });
+    } catch (err) { /* jw. */ }
+  }
+
+  // ---------- bieg po trasie: start, zaliczanie punktów, międzyczasy ----------
+  const mmss = (ms) => {
+    const t = Math.max(0, Math.round(ms / 1000)), m = Math.floor(t / 60);
+    return (m >= 60 ? Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') : m) + ':' + String(t % 60).padStart(2, '0');
+  };
+  let runTimer = null;
+  function tickRun() {
+    $('lrun').hidden = !run;
+    if (run) $('lruntext').textContent = 'Czas ' + mmss(Date.now() - run.t0);
+  }
+  function dropRun() {
+    if (runTimer) { clearInterval(runTimer); runTimer = null; }
+    run = null;
+    tickRun();
+  }
+  function startRun() {
+    reveal = false; shownRun = null; track = [];
+    $('lresult').hidden = true;
+    run = { t0: Date.now(), key: mapKey, title: $('ltitle').textContent || mapName, course: courseName, splits: [], track: [] };
+    if (course[0].type === 'start') run.splits.push({ i: 0, type: 'start', code: course[0].code, t: 0 });
+    lastPunch = Date.now();
+    runTimer = setInterval(tickRun, 1000);
+    tickRun();
+  }
+  function split(auto) {
+    const c = course[courseAt];
+    run.splits.push({ i: courseAt, type: c.type, code: c.code, t: Date.now() - run.t0, auto });
+    lastPunch = Date.now();
+    signal();
+  }
+  function advance() {
+    courseAt++;
+    if (course[courseAt].type === 'start' && courseAt < course.length - 1) courseAt++; // ze startu od razu na pierwszy punkt
+    target = { x: course[courseAt].x, y: course[courseAt].y };
+    showNext();
+    setTapMode(null);
+    computeRoute();
+  }
+  function showNext() {
+    const b = $('lnext');
+    b.hidden = !course;
+    if (!course) return;
+    const n = course.filter((p) => p.type !== 'start').length;
+    const done = course.slice(0, courseAt + 1).filter((p) => p.type !== 'start').length;
+    const last = courseAt >= course.length - 1;
+    b.textContent = !run && courseAt < 0 ? 'Start' : last ? (run ? 'Zalicz metę ręcznie' : 'Trasa ukończona') : run ? `Zalicz punkt ${done} ręcznie` : `Następny punkt (${done + 1}/${n})`;
+    b.disabled = last && !run;
+    $('larnext').textContent = b.textContent;
+  }
+  // Przycisk: przed biegiem startuje zegar, w biegu ręcznie zalicza punkt, do którego biegniesz (gdy GPS go nie złapał).
+  function nextControl() {
+    if (!course) return;
+    const last = courseAt >= course.length - 1;
+    if (last && !run) return;
+    initSound();
+    if (!run) startRun(); else if (courseAt >= 0) split(false);
+    if (last) { finishRun(false); return; }
+    advance();
+  }
+  // Dobiegłeś do punktu, na który biegniesz: zaliczamy go sami i ustawiamy następny.
+  function autoPunch() {
+    if (!run || !course || courseAt < 0 || !cal || !fix || !target) return;
+    const c = course[courseAt];
+    if (target.x !== c.x || target.y !== c.y || Date.now() - lastPunch < 3000) return;
+    const p = toPixel(cal, fix.lat, fix.lon);
+    if (Math.hypot(p.x - c.x, p.y - c.y) / cal.pxPerM > Math.max(PUNCH_M, Math.min(fix.acc, 20))) return;
+    split(true);
+    if (courseAt >= course.length - 1) finishRun(false); else advance();
+  }
+  $('lnext').addEventListener('click', nextControl);
+  $('larnext').addEventListener('click', nextControl);
+
+  function climbCfg() { // jedno przecięcie warstwicy = pół cięcia w górę = (cięcie / 2) * przelicznik metrów po płaskim
+    const interval = parseFloat($('lcontour').value);
+    return interval > 0 && cal ? { contour: proc.contour, perCrossing: interval / 2 * BnoStore.climbFactor() * cal.pxPerM * proc.k } : null;
+  }
+  // Długość najszybszego wariantu apki między dwoma punktami trasy, w metrach (null = nie da się policzyć).
+  function legLength(p, q) {
+    try {
+      ensureProc();
+      const clamp = (v, m) => Math.min(m - 1, Math.max(0, Math.round(v)));
+      const leg = routeLeg(proc.cost, proc.w, proc.h, { x: clamp(p.x * proc.k, proc.w), y: clamp(p.y * proc.k, proc.h) },
+        { x: clamp(q.x * proc.k, proc.w), y: clamp(q.y * proc.k, proc.h) }, climbCfg());
+      if (!leg.best) return null;
+      const path = leg.best.path;
+      let len = 0;
+      for (let i = 1; i < path.length; i++) len += Math.hypot(path[i] % proc.w - path[i - 1] % proc.w, ((path[i] / proc.w) | 0) - ((path[i - 1] / proc.w) | 0));
+      return Math.round(len / proc.k / cal.pxPerM);
+    } catch (err) { return null; }
+  }
+  const ll = (p) => ({ lat: p[0], lon: p[1] });
+  function summarise(r, ctrl) {
+    const splits = r.splits.slice(), trk = r.track;
+    if (!splits.length || splits[0].type !== 'start') splits.unshift({ i: -1, type: 'start', t: 0, free: true });
+    const label = (sp) => (sp.free ? 'początek' : sp.type === 'start' ? 'start' : sp.type === 'meta' ? 'meta'
+      : String(ctrl.slice(0, sp.i + 1).filter((c) => c.type === 'punkt').length));
+    const legs = [];
+    for (let k = 1; k < splits.length; k++) {
+      const a = splits[k - 1], b = splits[k];
+      let ran = 0;
+      for (let q = 1; q < trk.length; q++) if (trk[q - 1][2] >= a.t / 1000 && trk[q][2] <= b.t / 1000) ran += distance(ll(trk[q - 1]), ll(trk[q]));
+      legs.push({ name: label(a) + ' → ' + label(b), time: b.t - a.t, ran: Math.round(ran), opt: a.free ? null : legLength(ctrl[a.i], ctrl[b.i]), auto: !!b.auto });
+    }
+    return legs;
+  }
+
+  // Odcinki śladu do nauki własnego tempa: kawałki po 25–40 m w jednym rodzaju terenu, tylko z dobrym GPS i w ruchu.
+  // Blisko ścieżki (w zasięgu błędu GPS) przyjmujemy, że biegłeś ścieżką; na granicy dwóch terenów odcinek odpada.
+  function paceWindows(trk, interval) {
+    const out = [];
+    if (!proc || !cal) return out;
+    const TR = BnoCore.TERRAIN, k = proc.k, rad = 6 * cal.pxPerM * k;
+    const TRAIL = new Set([T.PATH, T.PAVED, T.PATH2, T.PATH3, T.PATH4]);
+    const at = (x, y) => (x < 0 || y < 0 || x >= proc.w || y >= proc.h ? -1 : proc.cls[(y | 0) * proc.w + (x | 0)]);
+    const classOf = (x, y) => {
+      const c0 = at(x, y);
+      if (c0 < 0) return -1;
+      let trail = TRAIL.has(c0) ? c0 : -1, same = true;
+      for (const f of [0.5, 1]) for (let a = 0; a < 8; a++) {
+        const c = at(x + Math.cos(a * Math.PI / 4) * rad * f, y + Math.sin(a * Math.PI / 4) * rad * f);
+        if (TRAIL.has(c) && (trail < 0 || TR[c].cost < TR[trail].cost)) trail = c;
+        if (c !== c0) same = false;
+      }
+      return trail >= 0 ? trail : same && TR[c0].cost !== Infinity && !TR[c0].internal ? c0 : -1;
+    };
+    const crossings = (a, b) => {
+      const n = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) * k);
+      let cnt = 0, was = false;
+      for (let i = 0; i <= n; i++) {
+        const t = n ? i / n : 0, x = (a.x + (b.x - a.x) * t) * k, y = (a.y + (b.y - a.y) * t) * k;
+        const on = x >= 0 && y >= 0 && x < proc.w && y < proc.h && !!proc.contour[(y | 0) * proc.w + (x | 0)];
+        if (on && !was && i) cnt++;
+        was = on;
+      }
+      return cnt;
+    };
+    let w = null;
+    const flush = () => { if (w && w.d >= 25) out.push(w); w = null; };
+    for (let i = 1; i < trk.length; i++) {
+      const a = trk[i - 1], b = trk[i], dt = b[2] - a[2], d = distance(ll(a), ll(b));
+      if (!(dt > 0.3 && dt <= 10) || a[3] > 15 || b[3] > 15 || d / dt < 0.7 || d / dt > 8) { flush(); continue; }
+      const pa = toPixel(cal, a[0], a[1]), pb = toPixel(cal, b[0], b[1]);
+      const cls = classOf((pa.x + pb.x) / 2 * k, (pa.y + pb.y) / 2 * k);
+      if (cls < 0) { flush(); continue; }
+      if (w && w.cls !== cls) flush();
+      if (!w) w = { cls, d: 0, t: 0, cross: 0 };
+      w.d += d; w.t += dt; w.cross += interval > 0 ? crossings(pa, pb) : 0;
+      if (w.d >= 40) flush();
+    }
+    flush();
+    return out;
+  }
+
+  function finishRun(partial) {
+    const r = run, ctrl = course;
+    dropRun();
+    reveal = true;
+    const total = partial || !r.splits.length ? Date.now() - r.t0 : r.splits[r.splits.length - 1].t;
+    courseAt = -1; target = null; route = null; routes = []; routeNote = '';
+    showNext(); refresh();
+    if (r.track.length < 2 && r.splits.length < 2) return; // nic się nie wydarzyło
+    $('lresult').hidden = false; $('lresult').textContent = 'Liczę podsumowanie biegu…';
+    setTimeout(() => {
+      const legs = summarise(r, ctrl), interval = parseFloat($('lcontour').value) || 0;
+      let learned = 0;
+      try {
+        ensureProc();
+        const win = paceWindows(r.track, interval);
+        learned = win.reduce((sum, w) => sum + w.d, 0);
+        BnoStore.addWindows(win, interval);
+      } catch (err) { /* bez terenu nie uczymy się tempa */ }
+      const stored = { id: r.t0, key: r.key, title: r.title, course: r.course, total, partial: !!partial, legs, learned: Math.round(learned),
+        track: r.track.map((p) => [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6, Math.round(p[2])]) };
+      BnoStore.saveRun(stored);
+      showRun(stored);
+    }, 60);
+  }
+  function twoTap(b, fn) { // przyciski, których nie chcesz nacisnąć przypadkiem w biegu
+    const label = b.textContent;
+    b.addEventListener('click', () => {
+      if (b.dataset.armed !== '1') {
+        b.dataset.armed = '1'; b.textContent = 'Na pewno?';
+        setTimeout(() => { b.dataset.armed = ''; b.textContent = label; }, 3000);
+        return;
+      }
+      b.dataset.armed = ''; b.textContent = label;
+      fn();
+    });
+  }
+  twoTap($('lrunstop'), () => { if (run) finishRun(true); });
+
+  // ---------- podsumowanie, lista przebiegów, GPX ----------
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  }
+  function saveGpx(r) {
+    const esc = (t) => String(t || '').replace(/[<>&"]/g, (ch) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[ch]));
+    const pts = r.track.map((p) => `<trkpt lat="${p[0]}" lon="${p[1]}"><time>${new Date(r.id + p[2] * 1000).toISOString()}</time></trkpt>`).join('\n');
+    const day = new Date(r.id).toISOString().slice(0, 10);
+    download(`bno-${day}.gpx`, `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="BKS Wataha BnO" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><time>${new Date(r.id).toISOString()}</time></metadata>\n<trk><name>${esc((r.title || 'Trening') + (r.course ? ' – ' + r.course : ''))}</name><type>running</type><trkseg>\n${pts}\n</trkseg></trk>\n</gpx>\n`, 'application/gpx+xml');
+  }
+  const mk = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+  const when = (r) => new Date(r.id).toLocaleString('pl-PL', { day: 'numeric', month: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  function showRun(r) {
+    shownRun = r; reveal = true;
+    track = r.track.map(ll);
+    const box = $('lresult');
+    box.hidden = false; box.replaceChildren();
+    box.append(mk('h3', `${r.course ? 'Trasa ' + r.course : 'Bieg'} · ${when(r)} · czas ${mmss(r.total)}` + (r.partial ? ' (przerwany)' : '')));
+    if (r.legs.length) {
+      const wrap = mk('div', null, 'tablewrap'), table = mk('table'), head = mk('tr'), body = mk('tbody');
+      for (const h of ['Odcinek', 'Czas', 'Przebiegłeś', 'Wariant apki', 'Nadłożone']) head.append(mk('th', h));
+      const thead = mk('thead'); thead.append(head);
+      let ran = 0, opt = 0, known = true;
+      for (const l of r.legs) {
+        const tr = mk('tr');
+        const extra = l.opt == null ? '—' : l.ran > l.opt ? `+${l.ran - l.opt} m` : '0 m';
+        for (const v of [l.name + (l.auto ? '' : ' ✋'), mmss(l.time), l.ran + ' m', l.opt == null ? '—' : l.opt + ' m', extra]) tr.append(mk('td', v));
+        body.append(tr);
+        ran += l.ran; if (l.opt == null) known = false; else opt += l.opt;
+      }
+      const sum = mk('tr');
+      for (const v of ['Razem', mmss(r.total), ran + ' m', known ? opt + ' m' : '—', known ? (ran > opt ? `+${ran - opt} m` : '0 m') : '—']) sum.append(mk('th', v));
+      body.append(sum);
+      table.append(thead, body); wrap.append(table); box.append(wrap);
+    }
+    box.append(mk('p', 'Niebieska linia na mapie to Twój ślad. „Wariant apki” to długość najszybszej drogi między punktami według założeń; ✋ oznacza punkt zaliczony ręcznie.'
+      + (r.learned ? ` Do Twojego tempa doszło ${r.learned} m pomiaru.` : ''), 'note'));
+    const row = mk('div', null, 'tools'), g = mk('button', 'Pobierz ślad GPX'), close = mk('button', 'Zamknij podsumowanie');
+    g.addEventListener('click', () => saveGpx(r));
+    close.addEventListener('click', () => { box.hidden = true; shownRun = null; track = []; refresh(); });
+    row.append(g, close); box.append(row);
+    renderRuns(); refresh();
+  }
+  function renderRuns() {
+    const list = BnoStore.runs().filter((r) => r.key === mapKey).reverse();
+    $('lruns').hidden = !list.length;
+    const box = $('lrunlist');
+    box.replaceChildren();
+    for (const r of list) {
+      const row = mk('div', null, 'tools');
+      row.append(mk('span', `${when(r)} · ${r.course || 'bez trasy'} · ${mmss(r.total)}` + (r.partial ? ' (przerwany)' : '')));
+      const show = mk('button', 'Pokaż'), g = mk('button', 'GPX'), del = mk('button', 'Usuń');
+      show.addEventListener('click', () => { showRun(r); $('lresult').scrollIntoView({ block: 'nearest' }); });
+      g.addEventListener('click', () => saveGpx(r));
+      twoTap(del, () => { if (shownRun && shownRun.id === r.id) { $('lresult').hidden = true; shownRun = null; track = []; } BnoStore.deleteRun(r.id); refresh(); });
+      row.append(show, g, del); box.append(row);
+    }
+  }
+  // zmieniło się własne tempo albo lista przebiegów (także w zakładce „Założenia”)
+  window.addEventListener('bno-store', () => {
+    if (proc) proc.cost = costGrid(proc.cls, BnoStore.costs());
+    renderRuns();
+    if (target && help === 'full' && !(route && route.custom) && !run) computeRoute();
+  });
+
   // ---------- GPS i kompas ----------
   function setFollow(on) {
     follow = on;
@@ -1103,7 +1409,7 @@
     if (tilted) pitch = e.beta;
     if (heading == null || Math.abs(((h - heading + 540) % 360) - 180) > 1.5 || (tilted && stream)) {
       heading = h;
-      applyView(); guide();
+      updateRot(); applyView(); guide();
     }
   }
 
@@ -1135,7 +1441,7 @@
       say('Przeglądarka udostępnia GPS tylko stronom otwartym przez HTTPS (albo localhost). Ta strona jest otwarta inaczej, więc pozycji nie będzie.');
       return;
     }
-    startCompass();
+    startCompass(); initSound();
     if (navigator.wakeLock) navigator.wakeLock.request('screen').then((w) => { wake = w; }).catch(() => {});
     watchId = navigator.geolocation.watchPosition((p) => {
       fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
@@ -1143,6 +1449,10 @@
       if (!last || distance(last, fix) > 4) {
         track.push({ lat: fix.lat, lon: fix.lon });
         if (track.length > 5000) track.shift();
+      }
+      if (run) {
+        if (run.track.length < 30000) run.track.push([fix.lat, fix.lon, (Date.now() - run.t0) / 1000, fix.acc]);
+        autoPunch();
       }
       refresh();
     }, (err) => {

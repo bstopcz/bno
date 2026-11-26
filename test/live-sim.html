@@ -6,7 +6,8 @@
 <meta name="theme-color" content="#0a0d0b">
 <title>BKS Wataha BnO</title>
 <link rel="icon" href="../logo.jpg">
-<link rel="apple-touch-icon" href="../logo.jpg">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap">
@@ -73,6 +74,14 @@
   #lguide { margin: -2px 0 12px; min-height: 1.2em; color: var(--accent);
             font: 700 24px/1.15 var(--display); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; }
   #lguide:empty { display: none; }
+  #lrun { align-items: center; }
+  #lruntext { font: 700 24px/1 var(--display); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  #lresult { margin: 0 0 12px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  #lresult h3 { margin: 0 0 10px; font: 700 22px/1.15 var(--display); letter-spacing: 0.03em; }
+  #lresult .tablewrap { margin-bottom: 10px; }
+  #lresult .tools { margin-bottom: 0; }
+  #lrunlist .tools { align-items: center; }
+  #lrunlist .tools span { flex: 1 1 220px; font-variant-numeric: tabular-nums; }
 
   /* Warianty ze zdjęcia */
   #wrap { overflow: auto; max-height: 75vh; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); }
@@ -229,6 +238,12 @@
     <button id="lnext" hidden>Następny punkt</button>
     <button id="ldraw">Narysuj trasę</button>
     <button id="lcam">Kamera</button>
+    <button id="lrot"></button>
+    <select id="lhelp" aria-label="Sposób prowadzenia">
+      <option value="full">prowadzenie: wariant</option>
+      <option value="dir">prowadzenie: sam kierunek</option>
+      <option value="map">sama mapa, bez pozycji</option>
+    </select>
     <select id="lmode" aria-label="Rodzaj mapy">
       <option value="forest">mapa leśna</option>
       <option value="sprint">sprint / miasto</option>
@@ -243,6 +258,8 @@
     <button id="lcalclear">Usuń kalibrację</button>
   </div>
   <div id="lguide"></div>
+  <div id="lrun" class="tools" hidden><span id="lruntext"></span><button id="lrunstop">Zakończ bieg</button></div>
+  <div id="lresult" hidden></div>
   <div id="lvariants" class="tools" hidden></div>
   <div id="lpanel" hidden>
     <p id="lhint"></p>
@@ -272,6 +289,10 @@
       <div id="lararrow" hidden><svg viewBox="0 0 100 100"><polygon points="50,4 88,58 64,58 64,96 36,96 36,58 12,58"/></svg></div>
     </div>
   </div>
+  <details id="lruns" hidden>
+    <summary>Moje przebiegi na tej mapie</summary>
+    <div id="lrunlist"></div>
+  </details>
   <details>
     <summary>Jak to ustawić</summary>
     <ol>
@@ -300,6 +321,14 @@
       <li>Gdy zbliżysz się do celu na 15 m, w miejscu celu pojawia się biało-pomarańczowy lampion. Jeśli jest poza kadrem,
           mały lampion przy krawędzi ekranu pokazuje, w którą stronę się obrócić.</li>
     </ol>
+    <p><b>Bieg po trasie.</b> Gdy mapa ma trasę, przycisk „Start” włącza zegar. Punkt zalicza się sam, gdy GPS pokaże Cię
+       do 10 m od środka kółka: telefon zawibruje, zapika i ustawi następny punkt. Jeśli GPS punktu nie złapie, zalicz go
+       ręcznie przyciskiem „Następny punkt”. Po mecie zobaczysz międzyczasy, swój ślad i porównanie z wariantem apki;
+       przebieg zapisuje się w telefonie i można go pobrać jako GPX (Strava, Livelox, QuickRoute).</p>
+    <p><b>Sposób prowadzenia.</b> „Wariant” prowadzi po wyliczonej drodze. „Sam kierunek” pokazuje tylko strzałkę prosto
+       na punkt i odległość. „Sama mapa” chowa Twoją pozycję i strzałkę: nawigujesz sam, a apka tylko potwierdza punkty –
+       ślad zobaczysz po biegu.</p>
+    <p><b>Obrót mapy</b> ustawia mapę tak, żeby góra ekranu była tam, gdzie patrzysz (potrzebny działający kompas).</p>
     <p>Kalibracja zapisuje się w tej przeglądarce dla danego pliku mapy.</p>
   </details>
   <details>
@@ -384,6 +413,51 @@
     </table>
   </div>
   <p class="note">Ostatnia kolumna: ile metrów ścieżki zajmuje tyle samo czasu, co 100 m tego terenu.</p>
+
+  <h2>Twoje tempo</h2>
+  <p class="lead">Po każdym biegu z trasą apka sprawdza na Twoim śladzie GPS, jak szybko naprawdę biegłeś w każdym terenie,
+     i gdy zbierze dość danych, podmienia mnożniki z tabeli na Twoje. Warianty są wtedy liczone pod Ciebie.</p>
+  <label class="mode"><input id="pon" type="checkbox"> Licz warianty według mojego tempa</label>
+  <p id="pstate" class="status"></p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Teren</th><th>Standard</th><th>Twoje</th><th>Zebrane dane</th></tr></thead>
+      <tbody id="pace"></tbody>
+    </table>
+  </div>
+  <ul>
+    <li>Liczą się tylko kawałki śladu, na których byłeś w ruchu, GPS miał dokładność do 15 m i cały kawałek leżał w jednym
+        rodzaju terenu. Postoje i odcinki na granicy dwóch terenów odpadają.</li>
+    <li>Gdy w zasięgu błędu GPS (6 m) jest ścieżka, apka przyjmuje, że biegłeś ścieżką.</li>
+    <li>Mnożnik terenu to Twoje tempo w nim podzielone przez Twoje tempo po ścieżce. Przelicznik przewyższeń wychodzi
+        z odcinków, na których przeciąłeś warstwice (wymaga ustawionego cięcia warstwicowego).</li>
+    <li>To pomiar z GPS, więc przybliżony: w wąskich pasach terenu bywa zawyżony albo zaniżony. Jeśli wyniki wyglądają
+        dziwnie, wyłącz własne tempo albo je wyzeruj.</li>
+  </ul>
+  <div class="tools"><button id="preset">Wyzeruj moje tempo</button></div>
+
+  <h2>Gdzie są Twoje dane</h2>
+  <p>Przebiegi, własne tempo, kalibracje i ustawienia zapisują się w pamięci przeglądarki <b>tego telefonu</b>.
+     Odświeżenie strony, zamknięcie przeglądarki ani wyłączenie telefonu ich nie kasuje. Nic nie jest wysyłane na serwer.</p>
+  <ul>
+    <li>Dane znikną, gdy wyczyścisz dane przeglądarki dla tej strony, odinstalujesz przeglądarkę albo otworzysz stronę
+        w trybie prywatnym, w innej przeglądarce lub na innym telefonie.</li>
+    <li>iPhone potrafi sam skasować dane strony nieużywanej przez kilka tygodni. Chroni przed tym dodanie strony do
+        ekranu głównego (Udostępnij → „Do ekranu początkowego”).</li>
+    <li>Apka pamięta 25 ostatnich przebiegów. Kopia do pliku zabezpiecza je i pozwala przenieść dane na inny telefon.</li>
+  </ul>
+  <div class="tools">
+    <button id="bexport">Zapisz kopię do pliku</button>
+    <label class="pick">Wczytaj kopię z pliku
+      <input id="bimport" type="file" accept=".json,application/json">
+    </label>
+  </div>
+  <p id="bstate" class="note"></p>
+
+  <h2>Bez internetu</h2>
+  <p>Po pierwszym otwarciu strona działa bez zasięgu. Mapa treningu jest dostępna offline, jeśli wcześniej ją otworzyłeś
+     albo kliknąłeś przy niej „Zapisz na telefon”. Najwygodniej dodać stronę do ekranu głównego – otwiera się wtedy jak aplikacja.
+     Nowa wersja strony pojawia się przy pierwszym otwarciu z internetem.</p>
 
   <h2>Skąd te liczby</h2>
   <ul>
@@ -566,6 +640,8 @@
     let start = 'open';
     try { const saved = localStorage.getItem('bno-tab'); if (TABS.includes(saved)) start = saved; } catch (e) { /* jw. */ }
     show(start);
+    // działanie bez internetu: kopia apki i otwartych map w pamięci telefonu
+    if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   })();
 </script>
 <script src="../geo.js"></script>
@@ -573,6 +649,7 @@
 <script src="../align.js"></script>
 <script src="../lines.js"></script>
 <script src="../core.js"></script>
+<script src="../store.js"></script>
 <script src="../ocad.js"></script>
 <script src="../symbols.js"></script>
 <script src="../course.js"></script>
