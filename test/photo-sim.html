@@ -117,7 +117,12 @@
   #lstage.full { position: fixed; inset: 0; z-index: 100; height: auto; min-height: 0; border: 0; border-radius: 0; }
   #lstage.full #lartext { top: calc(10px + env(safe-area-inset-top, 0px)); }
   #lstage.full #lmini { top: calc(74px + env(safe-area-inset-top, 0px)); }
-  #ladminfiles { display: grid; gap: 6px; margin-bottom: 12px; }
+  #gfiles { display: grid; gap: 6px; margin: 4px 0 12px; }
+  #tab-gen ol, #tab-gen ul { margin: 0 0 10px; padding-left: 20px; max-width: 72ch; }
+  #tab-gen li { margin: 7px 0; }
+  #tab-gen ul.note { color: var(--muted); font-size: 14px; }
+  #tab-gen p { max-width: 72ch; }
+  #gform .mode { margin-top: 12px; }
   #lpanel { padding: 14px; margin-bottom: 12px; border: 1px solid var(--accent); border-radius: 12px; background: var(--surface); }
   #lpanel p { margin: 0 0 10px; }
   #lpanel .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -151,7 +156,7 @@
   #ocadsyms td select { min-height: 36px; padding: 6px 8px; max-width: 220px; }
   #ocadsyms .tablewrap { margin-bottom: 14px; }
   @media (max-width: 560px) { /* na telefonie zostają trzy kolumny, żeby nazwy terenu się mieściły */
-    th:nth-child(4), td:nth-child(4), .note { display: none; }
+    #tab-info th:nth-child(4), #tab-info td:nth-child(4), #tab-info .note { display: none; }
   }
   #trainings { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); margin-bottom: 4px; }
   .card { display: flex; flex-direction: column; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
@@ -184,6 +189,7 @@
       <button id="tabbtn-live" data-tab="live">Na żywo</button>
       <button id="tabbtn-routes" data-tab="routes">Warianty</button>
       <button id="tabbtn-info" data-tab="info">Założenia</button>
+      <button id="tabbtn-gen" data-tab="gen">Generacja danych</button>
     </nav>
   </div>
 </header>
@@ -198,14 +204,13 @@
     <summary>Kto dodaje treningi</summary>
     <p>Listę treningów i mapy trzyma repozytorium strony. Zmienić je może tylko administrator, czyli osoba
        z prawem zapisu do tego repozytorium – nikt inny nie doda ani nie podmieni mapy.</p>
-    <p>Żeby dodać trening, administrator wczytuje mapę w zakładce „Na żywo”, kalibruje ją i pobiera gotowe dane
-       przyciskiem „Dane treningu dla admina” (na dole tamtej zakładki).</p>
+    <p>Komplet plików treningu administrator przygotowuje w zakładce „Generacja danych”.</p>
   </details>
 </main>
 
 <main id="tab-live">
-  <label class="pick">Wczytaj własną mapę (PDF / JPG / PNG, najlepiej razem z plikiem OCAD)
-    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld" multiple>
+  <label class="pick">Wczytaj własną mapę (PDF / JPG / PNG)
+    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf">
   </label>
   <div id="ltitle"></div>
   <div id="lstatus" class="status"></div>
@@ -260,10 +265,9 @@
     <ol>
       <li>Wczytaj mapę: obraz JPG/PNG albo PDF (z PDF-a brana jest pierwsza strona i zamieniana na ostry obraz).
           Im lepsza jakość (eksport z OCAD), tym lepiej.</li>
-      <li><b>Najdokładniej:</b> zaznacz naraz plik OCAD i PDF tej samej mapy. Apka pokaże PDF, a teren, skalę i położenie
-          weźmie z pliku OCAD: nie trzeba wtedy kalibrować ani wybierać rodzaju mapy. Jeśli eksportujesz z OCAD-a obraz
-          z plikiem georeferencji (np. JPG + JGW), zaznacz też ten plik: obraz zostanie osadzony co do piksela.</li>
-      <li>Bez pliku OCAD: dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
+      <li>Ta zakładka służy do prywatnego użytku: wczytujesz własną mapę, kalibrujesz ją i idziesz w teren.
+          Mapa i kalibracja zostają tylko w Twoim telefonie.</li>
+      <li>Dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
           i albo stań tam z włączonym GPS, albo wklej współrzędne skopiowane z Map Google
           (przytrzymaj palec na tym miejscu i skopiuj liczby).</li>
       <li>Włącz GPS. Niebieska kropka to Ty, strzałka pokazuje, dokąd skierowany jest telefon, czerwona linia to ślad.</li>
@@ -294,19 +298,6 @@
       <li>Dodaj stronę do ekranu głównego (menu przeglądarki), żeby otwierała się jak aplikacja.</li>
     </ol>
     <p>Mapa i kalibracja zostają w przeglądarce tego urządzenia. Nic nie jest nigdzie wysyłane.</p>
-  </details>
-  <details>
-    <summary>Dane treningu dla admina</summary>
-    <p>Wczytaj mapę, dodaj punkty kalibracji (najlepiej 3–4, ze współrzędnych z Map Google), ustaw rodzaj mapy
-       i cięcie warstwicowe, a potem kliknij przycisk. Dostaniesz gotowy wpis do pliku
-       <code>treningi/treningi.json</code>; uzupełnij w nim nazwę, opis i dojazd. Plik mapy trafia do folderu <code>treningi</code>.</p>
-    <p>Przycisk przygotowuje komplet: obraz mapy (JPG), siatkę terenu (PNG) i wpis z kalibracją. Oba pliki zapisz
-       w folderze <code>treningi</code>, a wpis wklej do <code>treningi/treningi.json</code>, uzupełniając nazwę, opis i dojazd.
-       Uczestnik po kliknięciu treningu dostaje wszystko gotowe: jego telefon niczego nie przelicza.
-       Pliki OCAD i PDF zostają u Ciebie.</p>
-    <p><button id="ladmin">Przygotuj pliki treningu</button></p>
-    <div id="ladminfiles"></div>
-    <textarea id="ladminout" rows="14" readonly hidden aria-label="Dane treningu"></textarea>
   </details>
 </main>
 
@@ -449,17 +440,97 @@
   </ul>
 </main>
 
+<main id="tab-gen" hidden>
+  <h2>Generacja danych treningu</h2>
+  <p class="lead">Tu administrator zamienia mapę z OCAD-a na komplet plików do zakładki „Treningi”. Wszystko liczy się
+     na tym komputerze: pliki OCAD i PDF nigdzie nie są wysyłane i nie trafiają na stronę.</p>
+
+  <h2>Krok 1. Przygotuj pliki z OCAD-a</h2>
+  <ol>
+    <li><b>Plik mapy <code>.ocd</code></b> – ten, z którego drukujesz mapę. Z niego brany jest teren (co jest ścieżką,
+        płotem, budynkiem, terenem zakazanym), warstwice, skala i położenie mapy na świecie.</li>
+    <li><b>Obraz tej samej mapy</b> – to, co zobaczy uczestnik. W OCAD-zie: <i>Plik → Eksport</i> i wybierz PDF albo JPG.
+        Eksportuj w skali mapy, w co najmniej 300 dpi, bez obracania. Może to być wycinek mapy (np. jeden arkusz A4).</li>
+    <li><b>Opcjonalnie plik georeferencji obrazu</b> (<code>.jgw</code> do JPG, <code>.pgw</code> do PNG). OCAD zapisuje go
+        obok obrazu, gdy przy eksporcie zaznaczysz tworzenie pliku World. Z nim obraz jest osadzany co do piksela;
+        bez niego apka sama dopasowuje obraz do mapy z OCAD-a.</li>
+  </ol>
+  <p class="note">Mapa w OCAD-zie musi mieć ustawioną georeferencję (<i>Mapa → Ustaw skalę i układ współrzędnych</i>) w układzie
+     PUWG 1992, PUWG 2000 albo UTM. Bez niej apka nie wyznaczy położenia i trzeba będzie kalibrować ręcznie.</p>
+
+  <h2>Krok 2. Wczytaj pliki</h2>
+  <p>Kliknij przycisk i zaznacz <b>wszystkie pliki naraz</b> (przytrzymaj Ctrl): <code>.ocd</code>, obraz lub PDF
+     i ewentualnie plik georeferencji. Przeliczenie trwa kilkanaście sekund.</p>
+  <label class="pick">Wybierz pliki mapy (OCAD + PDF lub JPG/PNG)
+    <input id="gfile" type="file" multiple accept="image/*,application/pdf,.pdf,.ocd,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld">
+  </label>
+  <p id="gchosen" class="note"></p>
+  <div id="gstatus" class="status" role="status"></div>
+  <ul class="note">
+    <li><b>„Kalibracja automatyczna…”</b> oznacza, że mapa jest gotowa. Sprawdź „zgodność terenu”: zwykle 60–90%.
+        Poniżej 35% apka ostrzega – najpewniej obraz nie pochodzi z tego pliku OCAD.</li>
+    <li>Bez pliku OCAD (sam obraz) teren zostanie rozpoznany z kolorów, mniej dokładnie, a mapę trzeba skalibrować ręcznie
+        w zakładce „Na żywo”, zanim wygenerujesz pliki.</li>
+  </ul>
+
+  <div id="gform" hidden>
+    <h2>Krok 3. Opisz trening</h2>
+    <label class="mode">Nazwa treningu (widoczna na liście):
+      <input id="gname" type="text" placeholder="np. Bielany – sprint">
+    </label>
+    <label class="mode">Krótki opis (długość, trudność, do kiedy wiszą punkty):
+      <input id="gdesc" type="text" placeholder="np. 3,2 km, 14 punktów, lampiony do 15 grudnia">
+    </label>
+    <label class="mode">Gdzie to jest i jak dojechać (parking, przystanek, miejsce startu):
+      <input id="gplace" type="text" placeholder="np. Parking przy ul. Marymonckiej 34, start przy bramie parku">
+    </label>
+    <label class="mode">Współrzędne miejsca startu do nawigacji w Mapach Google (puste = środek mapy):
+      <input id="gstart" type="text" placeholder="np. 52.2747, 20.9306">
+    </label>
+    <label class="mode">Cięcie warstwicowe mapy:
+      <select id="gcontour">
+        <option value="0">bez przewyższeń</option>
+        <option value="2">2 m</option>
+        <option value="2.5" selected>2,5 m</option>
+        <option value="5">5 m</option>
+      </select>
+    </label>
+
+    <h2>Krok 4. Wygeneruj i sprawdź</h2>
+    <div class="tools">
+      <button id="ggen" class="on">Przygotuj pliki treningu</button>
+      <button id="gpreview">Zobacz mapę w „Na żywo”</button>
+    </div>
+    <div id="gfiles"></div>
+    <textarea id="gout" rows="16" readonly hidden aria-label="Wpis treningu"></textarea>
+    <div class="tools"><button id="gcopy" hidden>Kopiuj wpis</button></div>
+
+    <h2>Krok 5. Opublikuj</h2>
+    <ol>
+      <li>Pobierz oba pliki: <b>obraz mapy</b> (<code>.jpg</code>) i <b>siatkę terenu</b> (<code>.siatka.png</code>)
+          i zapisz je w folderze <code>treningi</code> projektu, bez zmiany nazw.</li>
+      <li>Skopiuj wpis z okna powyżej i dopisz go do pliku <code>treningi/treningi.json</code> (albo przekaż osobie, która publikuje stronę).</li>
+      <li>Po opublikowaniu trening pojawi się w zakładce „Treningi”. Uczestnik dostaje gotowy obraz, teren i kalibrację –
+          jego telefon niczego nie przelicza.</li>
+    </ol>
+    <p class="note">Co jest w plikach: obraz to mapa zmniejszona do 4000 pikseli na dłuższym boku. Siatka terenu to tabela
+       kategorii (droga, las, płot, budynek…) w polach po kilkadziesiąt centymetrów oraz ślad warstwic – nie da się z niej
+       odtworzyć pliku OCAD. Plików <code>.ocd</code> i <code>.pdf</code> nie wrzucaj do folderu <code>treningi</code>.</p>
+  </div>
+</main>
+
 <footer>To pomoc treningowa. Na zawodach korzystanie z nawigacji jest zabronione.</footer>
 
 <script>
   (function () {
-    const TABS = ['open', 'live', 'routes', 'info'];
+    const TABS = ['open', 'live', 'routes', 'info', 'gen'];
     const show = (name) => {
       for (const t of TABS) {
         document.getElementById('tab-' + t).hidden = t !== name;
         document.getElementById('tabbtn-' + t).classList.toggle('on', t === name);
       }
       try { localStorage.setItem('bno-tab', name); } catch (e) { /* nieistotne */ }
+      window.dispatchEvent(new Event('resize')); // mapa wczytana w tle dopasuje się do okna, gdy zakładka się pojawi
     };
     for (const b of document.querySelectorAll('nav button')) b.addEventListener('click', () => show(b.dataset.tab));
     let start = 'open';
@@ -477,6 +548,7 @@
 <script src="../info.js"></script>
 <script src="../live.js"></script>
 <script src="../treningi.js"></script>
+<script src="../gen.js"></script>
 <script src="../app.js"></script>
 <script>
 window.onerror = (m) => { document.title = 'FAIL ' + m; };

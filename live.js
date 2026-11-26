@@ -39,7 +39,8 @@
   let target = null, route = null, routes = [], routeAt = 0, routeNote = ''; // route = wybrany wariant
   let stream = null;
 
-  const say = (text) => { $('lstatus').textContent = text; };
+  let sayHook = null; // zakładka "Generacja danych" podgląda komunikaty podczas przygotowania mapy
+  const say = (text) => { $('lstatus').textContent = text; if (sayHook) sayHook(text); };
 
   // ---------- widok mapy ----------
   function applyView() {
@@ -62,8 +63,11 @@
     drawMarkers();
   }
 
+  let needFit = false; // mapa wczytana, gdy zakładka była ukryta: dopasujemy widok, gdy się pojawi
   function fitView() {
     const r = stage.getBoundingClientRect();
+    if (!r.width || !r.height) { needFit = true; return; }
+    needFit = false;
     s = Math.min(r.width / W, r.height / H);
     ox = (r.width - W * s) / 2; oy = (r.height - H * s) / 2;
     applyView();
@@ -160,19 +164,10 @@
 
   // ---------- mapa ----------
   $('lfile').addEventListener('change', (e) => {
-    const files = [...e.target.files];
-    const isWorld = (f) => /\.(jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(f.name); // plik georeferencji obrazu ("world file")
-    const ocd = files.find((f) => /\.ocd$/i.test(f.name)), world = files.find(isWorld);
-    const other = files.find((f) => !/\.ocd$/i.test(f.name) && !isWorld(f));
-    if (other && (ocd || world)) { openPair(ocd, other, world); return; } // obraz/PDF + plik OCAD i/lub plik georeferencji
-    const file = other || files[0];
+    const file = e.target.files[0];
     if (!file) return;
-    if (/\.ocd$/i.test(file.name)) {
-      say('Do pliku OCAD dołącz PDF tej samej mapy: w oknie wyboru zaznacz oba pliki naraz (z klawiszem Ctrl). Sam plik OCAD obejrzysz w zakładce „Warianty”.');
-      return;
-    }
-    if (false) {
-      say('Plików OCAD jeszcze nie czytam. W OCAD wybierz Plik → Eksport → JPEG lub PNG (300 dpi) i wczytaj ten obraz.');
+    if (/\.(ocd|jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(file.name)) {
+      say('Tu wczytujesz samą mapę (PDF, JPG lub PNG) i kalibrujesz ją ręcznie. Pliki OCAD i georeferencji służą do przygotowania treningu w zakładce „Generacja danych”.');
       return;
     }
     say(/\.pdf$/i.test(file.name) ? 'Zamieniam PDF na obraz…' : 'Wczytuję mapę…');
@@ -324,6 +319,17 @@
   }
 
   window.BnoLive = {
+    // dla zakładki "Generacja danych": wczytanie plików mapy (obraz/PDF + OCAD i/lub plik georeferencji)
+    prepare(files, onStatus) {
+      const isWorld = (f) => /\.(jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(f.name);
+      const ocd = files.find((f) => /\.ocd$/i.test(f.name)), world = files.find(isWorld);
+      const other = files.find((f) => !/\.ocd$/i.test(f.name) && !isWorld(f));
+      sayHook = onStatus;
+      if (!other) { say('Brakuje obrazu mapy: dołącz PDF albo JPG/PNG tej samej mapy.'); return; }
+      openPair(ocd, other, world);
+    },
+    exportPackage,
+    state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName }),
     openTraining(t) {
       say('Pobieram mapę treningu…');
       loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka });
@@ -331,67 +337,58 @@
   };
 
   // Dla admina: dane skalibrowanej mapy w formacie wpisu do treningi/treningi.json.
-  // Dla admina: komplet plików treningu. Uczestnik dostaje gotowe: obraz do wyświetlenia, siatkę terenu
-  // (policzoną tu, z pliku OCAD albo z obrazu) i kalibrację. Jego telefon niczego już nie analizuje.
+  // Komplet plików treningu. Uczestnik dostaje gotowe: obraz do wyświetlenia, siatkę terenu (policzoną tu,
+  // z pliku OCAD albo z obrazu) i kalibrację. Jego telefon niczego już nie analizuje.
+  // meta: { nazwa, opis, miejsce, dojazd: {lat, lon} | null }. Zwraca { files: [{ name, label, url, size }], entry }.
   const EXPORT_DIM = 4000; // dłuższy bok publikowanego obrazu mapy
   const toBlob = (canvas, type, q) => new Promise((resolve) => canvas.toBlob(resolve, type, q));
   let exportUrls = [];
-  $('ladmin').addEventListener('click', async () => {
-    const out = $('ladminout'), files = $('ladminfiles');
-    out.hidden = false;
-    files.replaceChildren();
-    if (!cal) { out.value = 'Najpierw wczytaj mapę: z plikiem OCAD (kalibracja zrobi się sama) albo dodaj co najmniej 2 punkty kalibracji.'; return; }
-    out.value = 'Przygotowuję pliki treningu…';
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    try {
-      ensureProc();
-      for (const u of exportUrls) URL.revokeObjectURL(u);
-      exportUrls = [];
-      const id = mapName.replace(/\.[^.]+$/, '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mapa';
-      // 1. obraz mapy jako JPG
-      const es = Math.min(1, EXPORT_DIM / Math.max(W, H));
-      const ic = document.createElement('canvas');
-      ic.width = Math.round(W * es); ic.height = Math.round(H * es);
-      const ig = ic.getContext('2d');
-      ig.fillStyle = '#fff'; ig.fillRect(0, 0, ic.width, ic.height);
-      ig.drawImage(img, 0, 0, ic.width, ic.height);
-      // 2. siatka terenu jako PNG: kanał czerwony = kategoria terenu, zielony = warstwica
-      const gc = document.createElement('canvas');
-      gc.width = proc.w; gc.height = proc.h;
-      const data = new ImageData(proc.w, proc.h);
-      for (let i = 0; i < proc.cls.length; i++) { data.data[i * 4] = proc.cls[i]; data.data[i * 4 + 1] = proc.contour[i] ? 255 : 0; data.data[i * 4 + 3] = 255; }
-      gc.getContext('2d').putImageData(data, 0, 0);
-      const parts = [[await toBlob(ic, 'image/jpeg', 0.88), id + '.jpg', 'obraz mapy'], [await toBlob(gc, 'image/png'), id + '.siatka.png', 'siatka terenu']];
-      for (const [blob, name, label] of parts) {
-        if (!blob) throw new Error('przeglądarka nie zapisała pliku (za mało pamięci?)');
-        const url = URL.createObjectURL(blob);
-        exportUrls.push(url);
-        const link = document.createElement('a');
-        link.href = url; link.download = name; link.className = 'maplink';
-        link.textContent = `Pobierz: ${name} (${label}, ${Math.round(blob.size / 1024)} kB)`;
-        files.append(link);
-      }
-      const r = (v, k) => Math.round(v * k) / k;
-      const mid = pairs.reduce((acc, q) => ({ lat: acc.lat + q.lat / pairs.length, lon: acc.lon + q.lon / pairs.length }), { lat: 0, lon: 0 });
-      out.value = JSON.stringify({
-        id,
-        nazwa: 'NAZWA TRENINGU',
-        opis: 'Krótki opis: długość, trudność, do kiedy wiszą punkty.',
-        miejsce: 'Gdzie to jest i jak dojechać: parking, przystanek, miejsce startu.',
-        dojazd: { lat: r(mid.lat, 1e5), lon: r(mid.lon, 1e5) },
-        plik: 'treningi/' + id + '.jpg',
-        siatka: 'treningi/' + id + '.siatka.png',
-        skala: ocadCtx ? Math.round(ocadCtx.map.geo.scale) : undefined,
-        rodzaj: ocadCtx ? (ocadCtx.map.geo.scale <= 5000 ? 'sprint' : 'forest') : $('lmode').value,
-        ciecie: parseFloat($('lcontour').value),
-        zrodlo: ocadCtx ? 'OCAD' : 'obraz',
-        kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
-      }, null, 2);
-      out.select();
-    } catch (err) {
-      out.value = 'Nie udało się przygotować plików: ' + err.message;
+  async function exportPackage(meta) {
+    if (!W) throw new Error('Najpierw wczytaj pliki mapy.');
+    if (!cal) throw new Error('Mapa nie ma kalibracji. Dołącz plik OCAD albo plik georeferencji obrazu, albo skalibruj mapę ręcznie w zakładce „Na żywo”.');
+    ensureProc();
+    for (const u of exportUrls) URL.revokeObjectURL(u);
+    exportUrls = [];
+    const id = (meta.nazwa || mapName).replace(/\.[^.]+$/, '').toLowerCase().replace(/ł/g, 'l').normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mapa';
+    // 1. obraz mapy jako JPG
+    const es = Math.min(1, EXPORT_DIM / Math.max(W, H));
+    const ic = document.createElement('canvas');
+    ic.width = Math.round(W * es); ic.height = Math.round(H * es);
+    const ig = ic.getContext('2d');
+    ig.fillStyle = '#fff'; ig.fillRect(0, 0, ic.width, ic.height);
+    ig.drawImage(img, 0, 0, ic.width, ic.height);
+    // 2. siatka terenu jako PNG: kanał czerwony = kategoria terenu, zielony = warstwica
+    const gc = document.createElement('canvas');
+    gc.width = proc.w; gc.height = proc.h;
+    const data = new ImageData(proc.w, proc.h);
+    for (let i = 0; i < proc.cls.length; i++) { data.data[i * 4] = proc.cls[i]; data.data[i * 4 + 1] = proc.contour[i] ? 255 : 0; data.data[i * 4 + 3] = 255; }
+    gc.getContext('2d').putImageData(data, 0, 0);
+    const files = [];
+    for (const [blob, name, label] of [[await toBlob(ic, 'image/jpeg', 0.88), id + '.jpg', 'obraz mapy'], [await toBlob(gc, 'image/png'), id + '.siatka.png', 'siatka terenu']]) {
+      if (!blob) throw new Error('Przeglądarka nie zapisała pliku (za mało pamięci?).');
+      const url = URL.createObjectURL(blob);
+      exportUrls.push(url);
+      files.push({ name, label, url, size: blob.size });
     }
-  });
+    const r = (v, k) => Math.round(v * k) / k;
+    const mid = pairs.reduce((acc, q) => ({ lat: acc.lat + q.lat / pairs.length, lon: acc.lon + q.lon / pairs.length }), { lat: 0, lon: 0 });
+    const start = meta.dojazd || mid;
+    const entry = {
+      id,
+      nazwa: meta.nazwa || 'NAZWA TRENINGU',
+      opis: meta.opis || '',
+      miejsce: meta.miejsce || '',
+      dojazd: { lat: r(start.lat, 1e5), lon: r(start.lon, 1e5) },
+      plik: 'treningi/' + id + '.jpg',
+      siatka: 'treningi/' + id + '.siatka.png',
+      skala: ocadCtx ? Math.round(ocadCtx.map.geo.scale) : undefined,
+      rodzaj: ocadCtx ? (ocadCtx.map.geo.scale <= 5000 ? 'sprint' : 'forest') : $('lmode').value,
+      ciecie: meta.ciecie != null ? meta.ciecie : parseFloat($('lcontour').value),
+      zrodlo: ocadCtx ? 'OCAD' : 'obraz',
+      kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
+    };
+    return { files, entry };
+  }
 
   function savePairs() {
     cal = fit(pairs);
@@ -456,7 +453,7 @@
     zoomAt(p.x, p.y, e.deltaY < 0 ? 1.25 : 0.8);
     applyView();
   }, { passive: false });
-  window.addEventListener('resize', () => { if (W) applyView(); });
+  window.addEventListener('resize', () => { if (W) { if (needFit) fitView(); else applyView(); } });
 
   function tap(x, y) {
     if (!tapMode || tapMode === 'draw' || x < 0 || y < 0 || x > W || y > H) return;
