@@ -76,7 +76,7 @@
     if (h < 0) h += 360;
 
     if (h < 15 || h >= 345) return T.PURPLE; // czerwień (fiolet przekłamany przez aparat)
-    if (h < 33) return s < 0.45 ? T.PAVED : T.BROWN; // jasny brąz = utwardzone, mocny = warstwice
+    if (h < 33) return s < 0.6 && v > 0.78 ? T.PAVED : T.BROWN; // jasny beż = utwardzone, ciemny nasycony brąz = warstwice // jasny brąz = utwardzone, mocny = warstwice
     if (h >= 50 && h < 85 && v < 0.75 && s > 0.4) return T.FORBIDDEN; // oliwkowy
     if (h < 70) return T.OPEN; // żółty
     if (h < 165) return s < 0.27 ? T.GREEN1 : s < 0.45 ? T.GREEN2 : T.GREEN3;
