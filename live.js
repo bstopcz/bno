@@ -13,7 +13,7 @@
   const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
   const el = {};
   for (const [name, tag] of [['track', 'polyline'], ['alt', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
-    ['draw', 'polyline'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
+    ['draw', 'polyline'], ['aim', 'circle'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
     el[name] = document.createElementNS(SVG, tag);
     el[name].setAttribute('class', 'l-' + name);
     svg.append(el[name]);
@@ -103,7 +103,7 @@
     }
 
     const pos = position();
-    for (const k of ['dot', 'acc', 'head', 'track']) el[k].style.display = pos ? '' : 'none';
+    for (const k of ['dot', 'acc', 'head', 'track', 'aim']) el[k].style.display = pos ? '' : 'none';
     if (!pos) return;
     el.dot.setAttribute('cx', pos.x); el.dot.setAttribute('cy', pos.y);
     el.dot.setAttribute('r', 8 * u); el.dot.setAttribute('stroke-width', 3 * u);
@@ -111,6 +111,13 @@
     el.acc.setAttribute('r', Math.max(8 * u, fix.acc * cal.pxPerM));
     el.track.setAttribute('points', fmt(track.map((t) => toPixel(cal, t.lat, t.lon))));
     el.track.setAttribute('stroke-width', 2.5 * u);
+    // punkt na trasie, w który celuje strzałka w trybie kamery
+    const g = route ? guidance() : null;
+    el.aim.style.display = g && !g.arrived ? '' : 'none';
+    if (g) {
+      el.aim.setAttribute('cx', g.aim.x); el.aim.setAttribute('cy', g.aim.y);
+      el.aim.setAttribute('r', 6 * u); el.aim.setAttribute('stroke-width', 3 * u);
+    }
     if (heading == null) { el.head.style.display = 'none'; return; }
     const v = headingVector(cal, heading), a = 12 * u, b = 30 * u, c = 9 * u;
     el.head.setAttribute('points', fmt([
@@ -412,16 +419,17 @@
     const pos = position();
     if (!target || !pos) return null;
     const straight = Math.hypot(target.x - pos.x, target.y - pos.y) / cal.pxPerM;
-    let aim = target, dist = straight;
+    let aim = target, dist = straight, off = 0;
     if (route) {
       const near = nearestOnRoute(pos);
+      off = near.d / cal.pxPerM;
       const want = route.cum[near.i] + LOOKAHEAD_M * cal.pxPerM;
       let j = near.i;
       while (j < route.pts.length - 1 && route.cum[j] < want) j++;
       aim = route.pts[j];
       dist = (route.cum[route.cum.length - 1] - route.cum[near.i]) / cal.pxPerM + near.d / cal.pxPerM;
     }
-    return { bearing: bearingOf(cal, aim.x - pos.x, aim.y - pos.y), dist, arrived: straight < Math.max(15, fix.acc) };
+    return { bearing: bearingOf(cal, aim.x - pos.x, aim.y - pos.y), dist, aim, off, arrived: straight < Math.max(15, fix.acc) };
   }
 
   function guide() {
@@ -437,6 +445,8 @@
           const a = Math.abs(rel);
           text += a < 15 ? ' · prosto' : a > 135 ? ' · zawróć' : (rel > 0 ? ' · w prawo ' : ' · w lewo ') + Math.round(a / 5) * 5 + '°';
         }
+        if (g.off > 25) text += ` · jesteś ${Math.round(g.off / 5) * 5} m od trasy`;
+        if (!route) text += ' · brak trasy, kierunek prosto na cel';
         if (routeNote) text += ' · ' + routeNote;
       }
     } else if (!target && W) text = '';
