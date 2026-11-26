@@ -200,8 +200,8 @@
 </main>
 
 <main id="tab-live">
-  <label class="pick">Wczytaj własną mapę (JPG / PNG)
-    <input id="lfile" type="file" accept="image/*,.ocd">
+  <label class="pick">Wczytaj własną mapę (JPG / PNG / PDF)
+    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd">
   </label>
   <div id="ltitle"></div>
   <div id="lstatus" class="status"></div>
@@ -254,7 +254,8 @@
   <details>
     <summary>Jak to ustawić</summary>
     <ol>
-      <li>Wczytaj obraz mapy. Im lepsza jakość (eksport z OCAD, skan), tym lepiej.</li>
+      <li>Wczytaj mapę: obraz JPG/PNG albo PDF (z PDF-a brana jest pierwsza strona i zamieniana na ostry obraz).
+          Im lepsza jakość (eksport z OCAD), tym lepiej.</li>
       <li>Dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
           i albo stań tam z włączonym GPS, albo wklej współrzędne skopiowane z Map Google
           (przytrzymaj palec na tym miejscu i skopiuj liczby).</li>
@@ -292,14 +293,16 @@
     <p>Wczytaj mapę, dodaj punkty kalibracji (najlepiej 3–4, ze współrzędnych z Map Google), ustaw rodzaj mapy
        i cięcie warstwicowe, a potem kliknij przycisk. Dostaniesz gotowy wpis do pliku
        <code>treningi/treningi.json</code>; uzupełnij w nim nazwę, opis i dojazd. Plik mapy trafia do folderu <code>treningi</code>.</p>
-    <p><button id="ladmin">Pokaż dane tej mapy</button></p>
+    <p>Jeśli mapa była wczytana z PDF-a, pobierz też jej obraz przyciskiem poniżej i to ten plik PNG wrzuć do folderu
+       <code>treningi</code> (kalibracja odnosi się do pikseli tego obrazu, a PDF zostaje u Ciebie).</p>
+    <p><button id="ladmin">Pokaż dane tej mapy</button> <a id="ladminimg" class="maplink" hidden></a></p>
     <textarea id="ladminout" rows="14" readonly hidden aria-label="Dane treningu"></textarea>
   </details>
 </main>
 
 <main id="tab-routes" hidden>
-  <label class="pick">Zrób zdjęcie mapy / wybierz plik
-    <input id="file" type="file" accept="image/*">
+  <label class="pick">Wybierz plik mapy (JPG / PNG / PDF)
+    <input id="file" type="file" accept="image/*,application/pdf,.pdf">
   </label>
   <label class="mode">Rodzaj mapy:
     <select id="mode">
@@ -432,6 +435,7 @@
   })();
 </script>
 <script src="geo.js"></script>
+<script src="mapfile.js"></script>
 <script src="lines.js"></script>
 <script src="core.js"></script>
 <script src="info.js"></script>

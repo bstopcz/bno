@@ -26,6 +26,7 @@
   }
 
   let W = 0, H = 0, mapKey = null, mapName = '';
+  let mapImage = null;                  // adres obrazu wyrenderowanego z PDF-a (do pobrania przez admina)
   let locked = false;                   // mapa treningu: kalibracja jest gotowa i uczestnik jej nie zmienia
   let s = 1, ox = 0, oy = 0;           // ekran = mapa * s + (ox, oy)
   let vs = 1;                           // skala aktualnie widocznego widoku (mapa albo minimapa)
@@ -165,7 +166,11 @@
       say('Plików OCAD jeszcze nie czytam. W OCAD wybierz Plik → Eksport → JPEG lub PNG (300 dpi) i wczytaj ten obraz.');
       return;
     }
-    loadMap(URL.createObjectURL(file), { key: 'bno-cal:' + file.name + ':' + file.size, name: file.name });
+    say(/\.pdf$/i.test(file.name) ? 'Zamieniam PDF na obraz…' : 'Wczytuję mapę…');
+    BnoFile.open(file).then((f) => {
+      // dla PDF-a zapamiętujemy gotowy obraz: to on (a nie PDF) trafia potem do folderu treningów
+      loadMap(f.url, { key: 'bno-cal:' + file.name + ':' + file.size, name: f.name, image: f.pdf ? f.url : null });
+    }).catch((err) => say(err.message));
   });
 
   // Wczytuje obraz mapy. opts: { key, name, title?, preset? (gotowa kalibracja treningu), mode?, contour? }
@@ -176,6 +181,7 @@
       svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
+      mapImage = opts.image || null;
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -203,6 +209,9 @@
   $('ladmin').addEventListener('click', () => {
     const out = $('ladminout');
     out.hidden = false;
+    const link = $('ladminimg');
+    link.hidden = !mapImage;
+    if (mapImage) { link.href = mapImage; link.download = mapName; link.textContent = 'Pobierz obraz mapy (' + mapName + ')'; }
     if (!cal) { out.value = 'Najpierw wczytaj mapę i dodaj co najmniej 2 punkty kalibracji.'; return; }
     const r = (v, k) => Math.round(v * k) / k;
     out.value = JSON.stringify({

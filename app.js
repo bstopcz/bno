@@ -20,12 +20,12 @@
   const status = (text) => { $('status').textContent = text; };
   const READY = 'Stuknij start, a potem kolejne punkty kontrolne.';
 
-  function loadImage(file) {
+  function loadImage(url) {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Nie udało się wczytać zdjęcia'));
-      img.src = URL.createObjectURL(file);
+      img.onerror = () => reject(new Error('Nie udało się wczytać tego pliku jako obrazu.'));
+      img.src = url;
     });
   }
 
@@ -143,9 +143,10 @@
     if (!file || busy) return;
     status('Wczytuję zdjęcie…');
     try {
-      const dpi = readDpi(await file.arrayBuffer());
+      const opened = await BnoFile.open(file); // PDF jest tu zamieniany na obraz
+      const dpi = opened.pdf ? opened.dpi : readDpi(await file.arrayBuffer());
       if (dpi >= 100 && dpi <= 1200) $('dpi').value = Math.round(dpi); // 72/96 to zwykle wartość domyślna, nie prawdziwa
-      const img = await loadImage(file);
+      const img = await loadImage(opened.url);
       natW = img.naturalWidth;
       srcImg = img; hiPixels = undefined;
       const k = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
