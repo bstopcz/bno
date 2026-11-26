@@ -2,7 +2,8 @@
   'use strict';
   const { TERRAIN, POINT_NAMES, analyze: analyzeMap, costGrid, routeLeg } = BnoCore;
   const INK = { green: '#0a8a2a', black: '#000', brown: '#b4530a', blue: '#0b4fd6' };
-  const MAX_DIM = 1600; // rozdzielczość robocza (dłuższy bok)
+  const MAX_DIM = 1600;
+  const CONTOUR_RGB = [176, 84, 10]; // rozdzielczość robocza (dłuższy bok)
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('map');
@@ -33,7 +34,7 @@
     cost = costGrid(cls);
     const out = new ImageData(W, H);
     for (let i = 0; i < cls.length; i++) {
-      const rgb = TERRAIN[cls[i]].rgb;
+      const rgb = contour[i] ? CONTOUR_RGB : TERRAIN[cls[i]].rgb; // wykryte warstwice widać w "co widzę"
       out.data[i * 4] = rgb[0]; out.data[i * 4 + 1] = rgb[1]; out.data[i * 4 + 2] = rgb[2];
       out.data[i * 4 + 3] = 255;
     }
@@ -67,11 +68,15 @@
     }
   }
 
-  // Podejścia liczymy tylko, gdy znamy skalę: szerokość zdjęcia w metrach terenu.
+  const spanM = () => parseFloat(String($('spanm').value).replace(',', '.'));
+  const hasScale = () => spanM() > 0;
+
+  // Podejścia wpływają na trasę tylko, gdy znamy skalę: szerokość zdjęcia w metrach terenu.
   function climb() {
-    const interval = parseFloat($('contour').value), span = parseFloat(String($('spanm').value).replace(',', '.'));
-    if (!(interval > 0) || !(span > 0)) return null;
-    return { contour, perCrossing: interval / 2 * BnoCore.CLIMB_FACTOR * W / span };
+    const interval = parseFloat($('contour').value);
+    if (!(interval > 0)) return null;
+    // bez skali warstwice są tylko liczone (kara 0), ze skalą wpływają na wybór wariantu
+    return { contour, perCrossing: hasScale() ? interval / 2 * BnoCore.CLIMB_FACTOR * W / spanM() : 0 };
   }
 
   function runBusy(message, work) {
@@ -213,7 +218,10 @@
         ? 'biegnij praktycznie na wprost.'
         : `najlepszy wariant (czerwony) jest o ${extra}% dłuższy od prostej, ale ok. ${gain}% szybszy.`;
     }
-    if (leg.best.crossings != null) text += ` Przecina ${leg.best.crossings} warstwic.`;
+    if (leg.best.crossings != null) {
+      text += ` Przecina ${leg.best.crossings} warstwic` + (leg.straight.cost === Infinity ? '.' : ` (prosta: ${leg.straight.crossings}).`);
+      if (!hasScale()) text += ' Wpisz szerokość obszaru w metrach, żeby podejścia wpływały na wybór wariantu.';
+    }
     if (leg.alt) {
       const slower = Math.round((leg.alt.cost / leg.best.cost - 1) * 100);
       text += ` Alternatywa (niebieska przerywana): ${slower}% wolniejsza.`;
@@ -240,6 +248,12 @@
     item.append(sw, t.cost === Infinity ? `${t.name} – nie do przejścia` : `${t.name} ×${t.cost}`);
     $('legend').append(item);
   });
+  {
+    const item = document.createElement('span'), sw = document.createElement('i');
+    sw.style.background = `rgb(${CONTOUR_RGB.join(',')})`;
+    item.append(sw, 'warstwica');
+    $('legend').append(item);
+  }
   const GLYPH = { x: '×', ring: '○', dot: '●' };
   for (const color of Object.keys(POINT_NAMES)) {
     for (const kind of Object.keys(POINT_NAMES[color])) {
