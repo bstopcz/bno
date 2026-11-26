@@ -256,53 +256,5 @@
     oob: 'teren wyłączony (nadruk)', oobline: 'granica wyłączona (nadruk)',
   };
 
-  // Trasa narysowana w pliku symbolami nadruku: start, punkty kontrolne, meta i linie między nimi.
-  // Zwraca { points: [{ x, y, type: 'start' | 'punkt' | 'meta' }] w kolejności biegu (mm OCAD-a), ordered } albo null.
-  // Kolejność bierzemy z linii trasy łączących punkty; gdy się nie da (brak linii, kilka tras w pliku),
-  // punkty są układane od startu "do najbliższego" i ordered = false.
-  function course(map, setId) {
-    const legacy = setId === 'isom2000' || setId === 'issom2007';
-    const START = 701, CONTROL = legacy ? 702 : 703, FINISH = 706, LINE = legacy ? 704 : 705;
-    const nodes = [], lines = [];
-    for (const o of map.objects) {
-      const main = (o.sym / 1000) | 0, r = o.rings[0];
-      if (!r) continue;
-      if (o.type === 1 && (main === START || main === CONTROL || main === FINISH)) nodes.push({ x: r[0], y: r[1], type: main === START ? 'start' : main === FINISH ? 'meta' : 'punkt' });
-      else if (o.type === 2 && main === LINE) for (const ring of o.rings) lines.push([ring[0], ring[1], ring[ring.length - 2], ring[ring.length - 1]]);
-      else if (o.type === 3 && main === START) { // start bywa trójkątem-powierzchnią: bierzemy jego środek
-        let sx = 0, sy = 0; for (let i = 0; i < r.length; i += 2) { sx += r[i]; sy += r[i + 1]; }
-        nodes.push({ x: sx / (r.length / 2), y: sy / (r.length / 2), type: 'start' });
-      }
-    }
-    if (nodes.filter((n) => n.type === 'punkt').length === 0) return null;
-    const near = (x, y) => { // najbliższy punkt trasy w zasięgu 8 mm (promień kółka + przerwa do linii)
-      let best = -1, bd = 8;
-      nodes.forEach((n, i) => { const d = Math.hypot(n.x - x, n.y - y); if (d < bd) { bd = d; best = i; } });
-      return best;
-    };
-    const adj = nodes.map(() => []);
-    for (const [x0, y0, x1, y1] of lines) {
-      const a = near(x0, y0), b = near(x1, y1);
-      if (a >= 0 && b >= 0 && a !== b) { adj[a].push(b); adj[b].push(a); }
-    }
-    let first = nodes.findIndex((n) => n.type === 'start');
-    if (first < 0) first = adj.findIndex((list) => list.length === 1);
-    if (first < 0) first = 0;
-    const order = [first], used = new Set([first]);
-    for (let cur = first; ;) { // idziemy po liniach trasy
-      const next = adj[cur].find((j) => !used.has(j));
-      if (next == null) break;
-      order.push(next); used.add(next); cur = next;
-    }
-    const ordered = order.length === nodes.length;
-    while (order.length < nodes.length) { // reszta: zawsze do najbliższego nieodwiedzonego
-      const cur = nodes[order[order.length - 1]];
-      let best = -1, bd = Infinity;
-      nodes.forEach((n, i) => { if (used.has(i)) return; const d = Math.hypot(n.x - cur.x, n.y - cur.y); if (d < bd) { bd = d; best = i; } });
-      order.push(best); used.add(best);
-    }
-    return { points: order.map((i) => nodes[i]), ordered };
-  }
-
-  root.BnoSymbols = { SETS, KIND, KIND_NAMES, detectSet, kindOf, build, course };
+  root.BnoSymbols = { SETS, KIND, KIND_NAMES, detectSet, kindOf, build };
 })(typeof self !== 'undefined' ? self : this);

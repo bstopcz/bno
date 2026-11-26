@@ -236,20 +236,25 @@ if (typeof document !== 'undefined') {
   const leg2 = routeLeg(costGrid(g2.cls), g2.w, g2.h, px(80, 80), px(170, 50));
   assert.ok(leg2.best.cost <= leg.best.cost + 0.01 && !g2.cls.includes(T.WALL), 'po zmianie płot znika z siatki');
   print('OK OCAD -> siatka, m/pole', g.mpp.toFixed(2));
-  // trasa z pliku: start, trzy punkty i meta połączone liniami w kolejności S-2-3-1-M (obiekty w pliku są pomieszane)
-  const cmap = { objects: [
-    { sym: 703000, type: 1, rings: [[100, 100]] }, { sym: 701000, type: 1, rings: [[10, 10]] }, { sym: 703000, type: 1, rings: [[60, 20]] },
-    { sym: 706000, type: 1, rings: [[150, 120]] }, { sym: 703000, type: 1, rings: [[90, 60]] },
-    { sym: 705000, type: 2, rings: [[14, 12, 56, 19]] }, { sym: 705000, type: 2, rings: [[63, 23, 88, 57]] },
-    { sym: 705000, type: 2, rings: [[91, 63, 99, 96]] }, { sym: 705000, type: 2, rings: [[104, 102, 146, 118]] },
-  ] };
-  const cr = BnoSymbols.course(cmap, 'isom2017');
-  assert.strictEqual(cr.ordered, true);
-  assert.strictEqual(cr.points.map((p) => p.type[0] + p.x).join(' '), 's10 p60 p90 p100 m150', 'kolejność z linii trasy');
-  const cr2 = BnoSymbols.course({ objects: cmap.objects.filter((o) => o.type === 1) }, 'isom2017');
-  assert.strictEqual(cr2.ordered, false, 'bez linii trasy kolejność jest tylko przybliżona');
-  assert.strictEqual(cr2.points.length, 5);
-  assert.strictEqual(BnoSymbols.course(map, 'isom2017'), null, 'mapa bez trasy');
+  // plik trasy IOF XML 3.0: dwie trasy na wspólnych punktach
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<CourseData xmlns="http://www.orienteering.org/datastandard/3.0" iofVersion="3.0"><Event><Name>Test</Name></Event><RaceCourseData>
+ <Map><Scale>4000</Scale></Map>
+ <Control><Id>S1</Id><Position lng="20.9300" lat="52.2750"/><MapPosition x="10.5" y="-20.25" unit="mm"/></Control>
+ <Control><Id>31</Id><Position lng="20.9310" lat="52.2755"/><MapPosition x="27" y="-6" unit="mm"/></Control>
+ <Control><Id>32</Id><Position lng="20.9320" lat="52.2745"/><MapPosition x="44" y="-33" unit="mm"/></Control>
+ <Control><Id>F1</Id><Position lng="20.9305" lat="52.2748"/><MapPosition x="19" y="-25" unit="mm"/></Control>
+ <Course><Name>Długa</Name><CourseControl type="Start"><Control>S1</Control></CourseControl><CourseControl type="Control"><Control>32</Control></CourseControl>
+  <CourseControl type="Control"><Control>31</Control></CourseControl><CourseControl type="Finish"><Control>F1</Control></CourseControl></Course>
+ <Course><Name>Krótka</Name><CourseControl type="Start"><Control>S1</Control></CourseControl><CourseControl type="Control"><Control>31</Control></CourseControl>
+  <CourseControl type="Finish"><Control>F1</Control></CourseControl></Course>
+</RaceCourseData></CourseData>`;
+  const cf = BnoCourse.parseIofXml(xml);
+  assert.strictEqual(cf.courses.map((c) => c.name + ':' + c.controls.map((q) => q.code).join('-')).join(' | '), 'Długa:S1-32-31-F1 | Krótka:S1-31-F1');
+  assert.strictEqual(cf.courses[0].controls[0].type + ',' + cf.courses[0].controls[1].type + ',' + cf.courses[0].controls[3].type, 'start,punkt,meta');
+  assert.ok(Math.abs(cf.courses[0].controls[1].lat - 52.2745) < 1e-9 && cf.courses[0].controls[1].mx === 44 && cf.courses[0].controls[1].my === -33);
+  let bad = ''; try { BnoCourse.parseIofXml('<a/>'); } catch (err) { bad = err.message; }
+  assert.ok(/IOF XML 3.0/.test(bad), 'zły plik XML daje zrozumiały komunikat');
   // tabele symboli: najważniejsze numery w czterech zestawach (wg specyfikacji IOF)
   const k = (set, num, type, name, lw) => BnoSymbols.kindOf(set, { num: Math.round(num * 1000), type, name: name || '', lineWidth: lw || 0 });
   const expect = [

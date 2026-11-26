@@ -182,12 +182,48 @@
   let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
   let gridCtx = null; // gotowa siatka terenu treningu: { w, h, cls, contour }
   // Trasa treningu: punkty w kolejności biegu (piksele obrazu) i numer punktu, do którego teraz biegniesz.
-  let course = null, courseAt = -1, courseOrdered = true;
+  let course = null, courseAt = -1;
+  let courses = [];        // trasy treningu: [{ name, points: [{ x, y, type, code }] }] w pikselach obrazu
+  let courseFile = null;   // trasy wczytane z pliku (pozycje na świecie albo na mapie), czekające na przeliczenie
 
-  function setCourse(points, ordered) {
+  function setCourse(points) {
     course = points && points.length ? points : null;
-    courseAt = -1; courseOrdered = ordered !== false;
+    courseAt = -1;
     showNext();
+  }
+  // Lista tras do wyboru; przy jednej trasie wybiera się sama.
+  function setCourses(list) {
+    courses = list || [];
+    const sel = $('lcourse');
+    sel.replaceChildren();
+    sel.hidden = courses.length < 2;
+    courses.forEach((c, i) => { const o = document.createElement('option'); o.value = i; o.textContent = `Trasa: ${c.name} (${c.points.filter((p) => p.type === 'punkt').length} pkt)`; sel.append(o); });
+    setCourse(courses.length ? courses[0].points : null);
+  }
+  $('lcourse').addEventListener('change', () => { setCourse(courses[+$('lcourse').value].points); target = null; route = null; routes = []; refresh(); });
+
+  // Przeliczenie tras z pliku na piksele obrazu: z pozycji na świecie (przez kalibrację) albo z pozycji na mapie
+  // OCAD-a (gdy znamy położenie obrazu na tej mapie). Zwraca dopisek do komunikatu.
+  function resolveCourses(left, top, mmImg) {
+    if (!courseFile) return '';
+    const crsGeo = courseFile.geo && BnoAlign.detectCrs(courseFile.geo);
+    let lost = 0;
+    const list = courseFile.courses.map((c) => ({
+      name: c.name,
+      points: c.controls.map((q) => {
+        let ll = q.lat != null ? { lat: q.lat, lon: q.lon } : null;
+        if (!ll && crsGeo && q.mx != null) ll = BnoAlign.ocadToLatLon(courseFile.geo, crsGeo, q.mx, q.my); // projekt tras z własną georeferencją
+        let p = null;
+        if (ll && cal) p = toPixel(cal, ll.lat, ll.lon);
+        else if (q.mx != null && mmImg) p = { x: (q.mx - left) / mmImg, y: (top - q.my) / mmImg }; // te same milimetry co mapa OCAD
+        if (!p || p.x < 0 || p.y < 0 || p.x > W || p.y > H) { lost++; return null; }
+        return { x: p.x, y: p.y, type: q.type, code: q.code };
+      }).filter(Boolean),
+    })).filter((c) => c.points.some((p) => p.type === 'punkt'));
+    setCourses(list);
+    if (!list.length) return '. UWAGA: żaden punkt trasy nie leży na tym obrazie mapy – sprawdź, czy plik trasy jest do tej mapy';
+    return `. Trasy z pliku: ${list.map((c) => `${c.name} (${c.points.filter((p) => p.type === 'punkt').length} pkt)`).join(', ')}`
+      + (lost ? `; ${lost} pozycji poza obrazem pominięto` : '') + (courseFile.notes.length ? '. ' + courseFile.notes.join(' ') : '');
   }
   function showNext() {
     const b = $('lnext'), n = course ? course.filter((p) => p.type !== 'start').length : 0;
@@ -231,9 +267,14 @@
     };
     gi.src = url;
   }
-  async function openPair(ocdFile, imgFile, worldFile) {
+  async function openPair(ocdFile, imgFile, worldFile, courseSrc) {
     try {
       let map = null, world = null;
+      courseFile = null;
+      if (courseSrc) {
+        say('Czytam plik trasy…');
+        courseFile = /\.xml$/i.test(courseSrc.name) ? BnoCourse.parseIofXml(await courseSrc.text()) : BnoCourse.parseOcadCourses(await courseSrc.arrayBuffer());
+      }
       if (ocdFile) { say('Czytam plik OCAD…'); map = BnoOcad.parse(await ocdFile.arrayBuffer()); }
       if (worldFile) {
         // sześć liczb: rozmiar piksela w X, obrót, obrót, rozmiar piksela w Y (ujemny), współrzędne środka lewego górnego piksela
@@ -254,7 +295,7 @@
     pairs = [[0, 0], [W, 0], [0, H], [W, H]].map(([px, py]) => Object.assign(BnoAlign.tmInverse(wf.c + wf.a * px + wf.b * py, wf.f + wf.d * px + wf.e * py, crs), { px, py }));
     cal = fit(pairs); locked = true;
     $('lcaladd').hidden = true; $('lcalclear').hidden = true;
-    ocadNote = `Kalibracja automatyczna z pliku georeferencji obrazu (${crs.name}).`;
+    ocadNote = `Kalibracja automatyczna z pliku georeferencji obrazu (${crs.name})` + resolveCourses(0, 0, 0) + '.';
     refresh();
   }
   let ocadNote = '';
@@ -310,13 +351,7 @@
       note += `. Kalibracja automatyczna z georeferencji (${crs.name})`;
       if (Math.abs(map.geo.angle) > 0.01) note += `; mapa obrócona o ${map.geo.angle.toFixed(1)}° – ten przypadek nie był sprawdzony w terenie`;
     } else note += '. Plik nie ma georeferencji w znanym układzie – skalibruj mapę ręcznie dwoma punktami';
-    // trasa narysowana w pliku OCAD (start, punkty, meta), przeliczona na piksele obrazu
-    const crsPts = BnoSymbols.course(map, setId);
-    if (crsPts) {
-      const pts = crsPts.points.map((p) => ({ x: (p.x - left) / mmImg, y: (top - p.y) / mmImg, type: p.type })).filter((p) => p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H);
-      setCourse(pts, crsPts.ordered);
-      if (pts.length) note += `. Trasa z pliku: ${pts.filter((p) => p.type === 'punkt').length} punktów` + (crsPts.ordered ? '' : ' (kolejności nie udało się odczytać z linii trasy – ustawiona „do najbliższego”)');
-    }
+    note += resolveCourses(left, top, mmImg);
     ocadCtx.note = note + '.';
     refresh();
   }
@@ -332,7 +367,7 @@
       mapImage = opts.image || null;
       ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
       if (opts.grid) loadGrid(opts.grid);
-      setCourse(opts.course || null, opts.courseOrdered);
+      setCourses(opts.courses || []);
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -357,19 +392,25 @@
   window.BnoLive = {
     // dla zakładki "Generacja danych": wczytanie plików mapy (obraz/PDF + OCAD i/lub plik georeferencji)
     prepare(files, onStatus) {
-      const isWorld = (f) => /\.(jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(f.name);
-      const ocd = files.find((f) => /\.ocd$/i.test(f.name)), world = files.find(isWorld);
-      const other = files.find((f) => !/\.ocd$/i.test(f.name) && !isWorld(f));
+      const isWorld = (f) => /\.(jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(f.name), isOcd = (f) => /\.ocd$/i.test(f.name), isXml = (f) => /\.xml$/i.test(f.name);
       sayHook = onStatus;
-      if (!other) { say('Brakuje obrazu mapy: dołącz PDF albo JPG/PNG tej samej mapy.'); return; }
-      openPair(ocd, other, world);
+      (async () => {
+        // plik .ocd może być mapą albo projektem tras z OCAD Course Setting: rozróżniamy po nagłówku
+        let ocd = null, courseSrc = files.find(isXml) || null;
+        for (const f of files.filter(isOcd)) {
+          if (BnoCourse.isCourseProject(await f.slice(0, 8).arrayBuffer())) { if (!courseSrc) courseSrc = f; } else if (!ocd) ocd = f;
+        }
+        const world = files.find(isWorld), other = files.find((f) => !isOcd(f) && !isWorld(f) && !isXml(f));
+        if (!other) { say('Brakuje obrazu mapy: dołącz PDF albo JPG/PNG tej samej mapy.'); return; }
+        openPair(ocd, other, world, courseSrc);
+      })().catch((err) => say(err.message));
     },
     exportPackage,
-    state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName }),
+    state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName, courses: courses.map((c) => c.name) }),
     openTraining(t) {
       say('Pobieram mapę treningu…');
       loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka,
-        course: Array.isArray(t.trasa) ? t.trasa.map((p) => ({ x: +p.px, y: +p.py, type: p.typ })) : null, courseOrdered: t.trasaKolejnosc });
+        courses: Array.isArray(t.trasy) ? t.trasy.map((c) => ({ name: c.nazwa, points: (c.punkty || []).map((p) => ({ x: +p.px, y: +p.py, type: p.typ, code: p.kod })) })) : [] });
     },
   };
 
@@ -422,8 +463,7 @@
       rodzaj: ocadCtx ? (ocadCtx.map.geo.scale <= 5000 ? 'sprint' : 'forest') : $('lmode').value,
       ciecie: meta.ciecie != null ? meta.ciecie : parseFloat($('lcontour').value),
       zrodlo: ocadCtx ? 'OCAD' : 'obraz',
-      trasa: course ? course.map((p) => ({ px: r(p.x * es, 10), py: r(p.y * es, 10), typ: p.type })) : undefined,
-      trasaKolejnosc: course ? courseOrdered : undefined,
+      trasy: courses.length ? courses.map((c) => ({ nazwa: c.name, punkty: c.points.map((p) => ({ px: r(p.x * es, 10), py: r(p.y * es, 10), typ: p.type, kod: p.code })) })) : undefined,
       kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
     };
     return { files, entry };

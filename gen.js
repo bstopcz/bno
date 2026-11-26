@@ -81,6 +81,7 @@
       box.append(list);
       out.value = json;
       $('gcopy').hidden = false;
+      if (!pack.entry.trasy) list.textContent += ' Uwaga: paczka nie zawiera trasy (nie dołączono pliku trasy), więc uczestnik nie dostanie przycisku „Następny punkt”.';
     } catch (err) {
       out.value = err.message;
     }

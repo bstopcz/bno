@@ -223,6 +223,7 @@
     <button id="lgps">Włącz GPS</button>
     <button id="lfollow"></button>
     <button id="ltarget">Ustaw cel</button>
+    <select id="lcourse" aria-label="Trasa" hidden></select>
     <button id="lnext" hidden>Następny punkt</button>
     <button id="ldraw">Narysuj trasę</button>
     <button id="lcam">Kamera</button>
@@ -462,13 +463,14 @@
 
   <h2>Krok 1. Przygotuj pliki z OCAD-a</h2>
   <ol>
-    <li><b>Trasa (opcjonalnie)</b> – jeśli w pliku <code>.ocd</code> jest narysowana trasa symbolami nadruku (start, punkty
-        kontrolne, meta i linie między nimi), apka ją odczyta. Uczestnik dostanie wtedy przycisk „Następny punkt”,
-        który sam ustawia kolejny punkt jako cel. Trasa musi być też widoczna na eksportowanym obrazie.</li>
     <li><b>Plik mapy <code>.ocd</code></b> – ten, z którego drukujesz mapę. Z niego brany jest teren (co jest ścieżką,
         płotem, budynkiem, terenem zakazanym), warstwice, skala i położenie mapy na świecie.</li>
     <li><b>Obraz tej samej mapy</b> – to, co zobaczy uczestnik. W OCAD-zie: <i>Plik → Eksport</i> i wybierz PDF albo JPG.
         Eksportuj w skali mapy, w co najmniej 300 dpi, bez obracania. Może to być wycinek mapy (np. jeden arkusz A4).</li>
+    <li><b>Plik trasy</b> z OCAD Course Setting. Najpewniej: <i>Układanie tras → Eksport → Trasy (IOF XML 3.0)</i>,
+        czyli plik <code>.xml</code> z punktami i kolejnością na każdej trasie (taki sam eksport mają Purple Pen i Condes).
+        Można też dołączyć sam plik projektu tras <code>.ocd</code>. Dzięki trasie uczestnik dostaje przycisk „Następny punkt”,
+        a gdy tras jest kilka, wybiera swoją z listy. Trasa musi być też widoczna na eksportowanym obrazie mapy.</li>
     <li><b>Opcjonalnie plik georeferencji obrazu</b> (<code>.jgw</code> do JPG, <code>.pgw</code> do PNG). OCAD zapisuje go
         obok obrazu, gdy przy eksporcie zaznaczysz tworzenie pliku World. Z nim obraz jest osadzany co do piksela;
         bez niego apka sama dopasowuje obraz do mapy z OCAD-a.</li>
@@ -477,14 +479,17 @@
      PUWG 1992, PUWG 2000 albo UTM. Bez niej apka nie wyznaczy położenia i trzeba będzie kalibrować ręcznie.</p>
 
   <h2>Krok 2. Wczytaj pliki</h2>
-  <p>Kliknij przycisk i zaznacz <b>wszystkie pliki naraz</b> (przytrzymaj Ctrl): <code>.ocd</code>, obraz lub PDF
-     i ewentualnie plik georeferencji. Przeliczenie trwa kilkanaście sekund.</p>
-  <label class="pick">Wybierz pliki mapy (OCAD + PDF lub JPG/PNG)
-    <input id="gfile" type="file" multiple accept="image/*,application/pdf,.pdf,.ocd,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld">
+  <p>Kliknij przycisk i zaznacz <b>wszystkie pliki naraz</b> (przytrzymaj Ctrl): mapę <code>.ocd</code>, obraz lub PDF,
+     plik trasy (<code>.xml</code> albo projekt tras <code>.ocd</code>) i ewentualnie plik georeferencji.
+     Przeliczenie trwa kilkanaście sekund.</p>
+  <label class="pick">Wybierz pliki: mapa OCAD + obraz/PDF + trasa
+    <input id="gfile" type="file" multiple accept="image/*,application/pdf,.pdf,.ocd,.xml,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld">
   </label>
   <p id="gchosen" class="note"></p>
   <div id="gstatus" class="status" role="status"></div>
   <ul class="note">
+    <li>W komunikacie zobaczysz też <b>„Trasy z pliku: …”</b> z nazwami tras i liczbą punktów. Jeśli tego nie ma,
+        plik trasy nie został dołączony albo jego punkty nie leżą na tym obrazie.</li>
     <li><b>„Kalibracja automatyczna…”</b> oznacza, że mapa jest gotowa. Sprawdź „zgodność terenu”: zwykle 60–90%.
         Poniżej 35% apka ostrzega – najpewniej obraz nie pochodzi z tego pliku OCAD.</li>
     <li>Bez pliku OCAD (sam obraz) teren zostanie rozpoznany z kolorów, mniej dokładnie, a mapę trzeba skalibrować ręcznie
@@ -565,6 +570,7 @@
 <script src="../core.js"></script>
 <script src="../ocad.js"></script>
 <script src="../symbols.js"></script>
+<script src="../course.js"></script>
 <script src="../info.js"></script>
 <script src="../live.js"></script>
 <script src="../treningi.js"></script>
