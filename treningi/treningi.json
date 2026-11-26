@@ -1,17 +1,16 @@
 [
   {
     "id": "okolica",
-    "nazwa": "test",
-    "opis": "Krótki opis: długość, trudność, do kiedy wiszą punkty.",
-    "miejsce": "Gdzie to jest i jak dojechać: parking, przystanek, miejsce startu.",
-    "dojazd": { "lat": 52.3547, "lon": 20.85939 },
-    "plik": "treningi/okolica.png",
-    "skala": 10000,
+    "nazwa": "Okolica (test)",
+    "opis": "Mapa testowa: ulice, płoty i teren prywatny.",
+    "miejsce": "Opis dojazdu do uzupełnienia.",
+    "dojazd": { "lat": 52.35469, "lon": 20.85949 },
+    "plik": "treningi/okolica.jpg",
     "rodzaj": "sprint",
-    "ciecie": 2.5,
+    "ciecie": 0,
     "kalibracja": [
-      { "lat": 52.354696, "lon": 20.859385, "px": 142.2, "py": 49.7 },
-      { "lat": 52.352998, "lon": 20.863489, "px": 905.9, "py": 570.6 }
+      { "lat": 52.354692, "lon": 20.859488, "px": 40.8, "py": 197.4 },
+      { "lat": 52.352077, "lon": 20.864691, "px": 1415.5, "py": 1333.3 }
     ]
   }
 ]
