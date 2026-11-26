@@ -112,6 +112,9 @@
   #lararrow polygon { fill: #e53935; stroke: #fff; stroke-width: 4; stroke-linejoin: round; }
   #larpin { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%;
             border: 5px solid #a000c8; background: rgba(255,255,255,0.35); box-shadow: 0 0 0 2px #fff; }
+  #larcanvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #larmode { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+             pointer-events: auto; background: rgba(4,19,10,0.78); border-color: var(--accent); }
   #lfull { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
            pointer-events: auto; background: rgba(4,19,10,0.78); border-color: var(--accent); }
   #lstage.full { position: fixed; inset: 0; z-index: 100; height: auto; min-height: 0; border: 0; border-radius: 0; }
@@ -253,10 +256,12 @@
   <div id="lstage"><div id="lworld"><img id="limg" alt=""><svg id="lsvg" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <video id="lvideo" playsinline muted hidden></video>
     <div id="lar" hidden>
+      <canvas id="larcanvas"></canvas>
       <div id="lartext"></div>
       <div id="larpin" hidden></div>
       <div id="lmini" hidden></div>
       <button id="lfull">Pełny ekran</button>
+      <button id="larmode"></button>
       <div id="lararrow" hidden><svg viewBox="0 0 100 100"><polygon points="50,4 88,58 64,58 64,96 36,96 36,58 12,58"/></svg></div>
     </div>
   </div>
@@ -283,6 +288,10 @@
           (a gdy odejdziesz od niej o ponad 15 m, prowadzi z powrotem na linię, omijając teren nie do przejścia),
           a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy. Przycisk „Pełny ekran” w rogu
           obrazu rozciąga kamerę na cały ekran telefonu.</li>
+      <li>Przycisk „Tryb” w prawym dolnym rogu kamery przełącza między strzałką a wstęgą: czerwonym pasem narysowanym
+          na ziemi wzdłuż najbliższych 60 m trasy. Wstęga zakłada płaski teren i leży tak dokładnie, jak pozwala GPS i kompas.</li>
+      <li>Gdy zbliżysz się do celu na 15 m, w miejscu celu pojawia się biało-pomarańczowy lampion. Jeśli jest poza kadrem,
+          mały lampion przy krawędzi ekranu pokazuje, w którą stronę się obrócić.</li>
     </ol>
     <p>Kalibracja zapisuje się w tej przeglądarce dla danego pliku mapy.</p>
   </details>

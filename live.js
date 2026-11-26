@@ -740,7 +740,7 @@
     const g = guidance();
     let text = routeNote, rel = null;
     if (g && !routeNote.startsWith('Liczę')) {
-      if (g.arrived) text = 'Jesteś przy punkcie.';
+      if (g.arrived) text = stream ? 'Jesteś przy punkcie – szukaj lampionu.' : 'Jesteś przy punkcie.';
       else {
         text = `${Math.round(g.dist / 10) * 10} m do celu`;
         if (heading == null) text += ' · brak kompasu, kieruj się mapą';
@@ -758,8 +758,9 @@
     $('lguide').textContent = text;
     $('lartext').textContent = text || 'Ustaw cel na mapie, żeby zobaczyć strzałkę.';
 
+    drawGround(g); // wstęga trasy na ziemi i lampion przy celu
     const show = stream && rel != null && !(g && g.arrived);
-    $('lararrow').hidden = !show;
+    $('lararrow').hidden = !show || arMode === 'ribbon';
     $('larpin').hidden = true;
     if (!show) return;
     $('lararrow').style.transform = `translateX(-50%) perspective(420px) rotateX(58deg) rotateZ(${rel.toFixed(1)}deg)`;
@@ -809,6 +810,112 @@
   }
   $('lcam').addEventListener('click', () => { startCompass(); setCamera(!stream); });
 
+  // ---------- rysowanie "na ziemi": wstęga trasy i lampion ----------
+  // Prosty model kamery: telefon trzymany pionowo na wysokości CAM_H, patrzy w kierunku kompasu, pochylony
+  // w dół o (90 - pitch) stopni, teren płaski. Dokładność zależy od GPS i kompasu, więc to wskazówka, nie pomiar.
+  const CAM_H = 1.4;        // wysokość telefonu nad ziemią [m]
+  const FLAG_RANGE_M = 15;  // z tej odległości widać lampion przy celu
+  const RIBBON_M = 60;      // tyle metrów trasy przed Tobą rysuje wstęga
+  let arMode = 'arrow';
+  try { if (localStorage.getItem('bno-ar') === 'ribbon') arMode = 'ribbon'; } catch (err) { /* nieistotne */ }
+  const showArMode = () => { $('larmode').textContent = arMode === 'ribbon' ? 'Tryb: wstęga' : 'Tryb: strzałka'; };
+  showArMode();
+  $('larmode').addEventListener('click', () => {
+    arMode = arMode === 'ribbon' ? 'arrow' : 'ribbon';
+    try { localStorage.setItem('bno-ar', arMode); } catch (err) { /* jw. */ }
+    showArMode(); guide();
+  });
+
+  // Punkt na ziemi (albo "up" metrów nad nią) w odległości dist i kierunku bearing -> piksel ekranu albo null.
+  function toScreen(view, bearing, dist, up) {
+    const th = (bearing - heading) * Math.PI / 180;
+    const f = dist * Math.cos(th), r = dist * Math.sin(th), down = CAM_H - (up || 0);
+    const z = f * view.cos + down * view.sin;        // odległość wzdłuż osi kamery
+    if (z < 0.6) return null;                        // za plecami albo tuż pod nogami
+    const y = -f * view.sin + down * view.cos;       // w dół obrazu
+    return { x: view.w / 2 + r / z * view.f, y: view.h / 2 + y / z * view.f, z };
+  }
+
+  function drawGround(g) {
+    const cv = $('larcanvas');
+    if (!stream) return;
+    const rect = stage.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(rect.width * dpr) || cv.height !== Math.round(rect.height * dpr)) { cv.width = Math.round(rect.width * dpr); cv.height = Math.round(rect.height * dpr); }
+    const c = cv.getContext('2d');
+    c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, rect.width, rect.height);
+    const pos = position();
+    if (!g || !pos || heading == null) return;
+    const depress = Math.max(-20, Math.min(80, 90 - (pitch == null ? 75 : pitch))) * Math.PI / 180;
+    const view = { w: rect.width, h: rect.height, f: rect.width / 2 / Math.tan(CAM_HFOV / 2 * Math.PI / 180), cos: Math.cos(depress), sin: Math.sin(depress) };
+    const polar = (p) => ({ bearing: bearingOf(cal, p.x - pos.x, p.y - pos.y), dist: Math.hypot(p.x - pos.x, p.y - pos.y) / cal.pxPerM });
+    const straight = polar(target);
+
+    if (arMode === 'ribbon' && !g.arrived) {
+      // punkty trasy co 2 m, od Twojego miejsca na trasie do RIBBON_M przed Tobą (bez trasy: prosto na cel)
+      const pts = [];
+      if (route) {
+        const k = cal.pxPerM, m = matchRoute(pos), total = route.cum[route.cum.length - 1];
+        for (let d = 0; d <= RIBBON_M && m.c + d * k <= total + 2 * k; d += 2) pts.push(polar(pointAt(route, m.c + d * k)));
+      } else for (let d = 2; d <= Math.min(RIBBON_M, straight.dist); d += 2) pts.push({ bearing: straight.bearing, dist: d });
+      const scr = pts.map((p) => toScreen(view, p.bearing, Math.max(p.dist, 0.01), 0));
+      // pierwszy nieprzerwany widoczny odcinek rysujemy jako jeden pas: szeroki blisko, zwężający się w dal
+      const run = [];
+      for (const q of scr) { if (q) run.push(q); else if (run.length) break; }
+      if (run.length > 1) {
+        const band = (half) => {
+          const left = [], right = [];
+          run.forEach((q, i) => {
+            const a = run[Math.max(0, i - 1)], b = run[Math.min(run.length - 1, i + 1)];
+            const len = Math.hypot(b.x - a.x, b.y - a.y) || 1, nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+            const hw = Math.max(1.5, half * view.f / q.z); // pół szerokości pasa w pikselach
+            left.push([q.x + nx * hw, q.y + ny * hw]); right.push([q.x - nx * hw, q.y - ny * hw]);
+          });
+          c.beginPath();
+          left.concat(right.reverse()).forEach((pt, i) => (i ? c.lineTo(pt[0], pt[1]) : c.moveTo(pt[0], pt[1])));
+          c.closePath(); c.fill();
+        };
+        c.fillStyle = 'rgba(255,255,255,0.8)'; band(0.45);
+        c.fillStyle = 'rgba(229,57,53,0.88)'; band(0.33);
+      }
+    }
+
+    if (straight.dist <= FLAG_RANGE_M) drawFlag(c, view, straight);
+  }
+
+  // Lampion punktu kontrolnego: biało-pomarańczowy kwadrat 30 cm na stojaku, w miejscu celu.
+  function drawFlag(c, view, at) {
+    const dist = Math.max(at.dist, 1.5);
+    const top = toScreen(view, at.bearing, dist, 1.0), foot = toScreen(view, at.bearing, dist, 0);
+    if (!top) { // cel za plecami albo poza kadrem: mały lampion przy krawędzi ekranu po właściwej stronie
+      const rel = ((at.bearing - heading + 540) % 360) - 180;
+      paintFlag(c, rel > 0 ? view.w - 34 : 34, view.h * 0.5, 40);
+      return;
+    }
+    const size = Math.max(34, Math.min(view.h * 0.45, 0.3 * view.f / top.z)); // bok lampionu w pikselach
+    const x = Math.max(size / 2 + 6, Math.min(view.w - size / 2 - 6, top.x)), y = Math.max(size / 2 + 60, Math.min(view.h - size, top.y));
+    if (foot && x === top.x) { // stojak od ziemi do lampionu
+      c.strokeStyle = 'rgba(255,255,255,0.95)'; c.lineWidth = Math.max(3, size * 0.09);
+      c.beginPath(); c.moveTo(foot.x, foot.y); c.lineTo(x, y + size / 2); c.stroke();
+      c.strokeStyle = '#444'; c.lineWidth = Math.max(1.5, size * 0.045);
+      c.beginPath(); c.moveTo(foot.x, foot.y); c.lineTo(x, y + size / 2); c.stroke();
+    }
+    paintFlag(c, x, y, size);
+  }
+
+  function paintFlag(c, x, y, size) {
+    const h = size / 2;
+    c.save();
+    c.shadowColor = 'rgba(0,0,0,0.45)'; c.shadowBlur = size * 0.15; c.shadowOffsetY = size * 0.05;
+    c.fillStyle = '#fff';
+    c.fillRect(x - h, y - h, size, size);
+    c.restore();
+    c.fillStyle = '#f26b1d'; // pomarańczowa połowa po przekątnej, jak na lampionie
+    c.beginPath(); c.moveTo(x + h, y - h); c.lineTo(x + h, y + h); c.lineTo(x - h, y + h); c.closePath(); c.fill();
+    c.strokeStyle = 'rgba(40,40,40,0.9)'; c.lineWidth = Math.max(1.5, size * 0.035);
+    c.strokeRect(x - h, y - h, size, size);
+  }
+
   // Pełny ekran kamery. Klasa CSS działa wszędzie (także na iPhonie), a tam, gdzie przeglądarka
   // na to pozwala, dodatkowo chowamy jej paski prawdziwym trybem pełnoekranowym.
   function setFull(on) {
@@ -849,8 +956,9 @@
     else if (e.absolute && typeof e.alpha === 'number') h = upright ? cameraHeading(e.alpha, e.beta, e.gamma) : 360 - e.alpha; // Android
     if (h == null) return;
     h = (h + ((screen.orientation && screen.orientation.angle) || 0) + 360) % 360;
-    if (typeof e.beta === 'number') pitch = e.beta;
-    if (heading == null || Math.abs(((h - heading + 540) % 360) - 180) > 1.5) {
+    const tilted = typeof e.beta === 'number' && (pitch == null || Math.abs(e.beta - pitch) > 1.5);
+    if (tilted) pitch = e.beta;
+    if (heading == null || Math.abs(((h - heading + 540) % 360) - 180) > 1.5 || (tilted && stream)) {
       heading = h;
       applyView(); guide();
     }
