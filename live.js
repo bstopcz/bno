@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   const { fit, toPixel, headingVector, bearingOf, parseLatLon, distance } = BnoGeo;
-  const { analyze, costGrid, routeLeg } = BnoCore;
+  const { analyze, costGrid, routeLeg, CLIMB_FACTOR } = BnoCore;
   const $ = (id) => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
   const PROC_DIM = 1600;   // rozdzielczość, w której liczona jest trasa
@@ -322,7 +322,7 @@
     const g = c.getContext('2d', { willReadFrequently: true });
     g.drawImage(img, 0, 0, w, h);
     const res = analyze(g.getImageData(0, 0, w, h).data, w, h, $('lmode').value);
-    proc = { k, w, h, cost: costGrid(res.cls) };
+    proc = { k, w, h, cost: costGrid(res.cls), contour: res.contour };
   }
 
   function toRoute(part) {
@@ -332,14 +332,14 @@
     pts.push({ x: target.x, y: target.y });
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-    return { pts, cum, cost: part.cost };
+    return { pts, cum, cost: part.cost, crossings: part.crossings };
   }
 
   // Przyciski wyboru wariantu (A = najszybszy, B = alternatywa).
   let variantsKey = '';
   function renderVariants() {
     const len = (r) => (cal ? Math.round(r.cum[r.cum.length - 1] / cal.pxPerM / 10) * 10 : null);
-    const key = routes.map((r) => len(r) + ':' + (r === route) + ':' + !!r.custom).join('|');
+    const key = routes.map((r) => len(r) + ':' + (r === route) + ':' + !!r.custom + ':' + r.crossings).join('|');
     if (key === variantsKey) return;
     variantsKey = key;
     const box = $('lvariants');
@@ -350,7 +350,8 @@
       if (r.custom) b.textContent = 'Twoja trasa' + (len(r) == null ? '' : `: ${len(r)} m`);
       else {
         const slower = Math.round((r.cost / routes[0].cost - 1) * 100);
-        b.textContent = `Wariant ${'AB'[i]}: ${len(r)} m` + (i === 0 ? ' · najszybszy' : ` · ok. ${slower}% wolniejszy`);
+        b.textContent = `Wariant ${'AB'[i]}: ${len(r)} m` + (r.crossings == null ? '' : ` · ${r.crossings} warstw.`)
+          + (i === 0 ? ' · najszybszy' : ` · ok. ${slower}% wolniejszy`);
       }
       b.classList.toggle('on', r === route);
       b.addEventListener('click', () => { route = r; refresh(); });
@@ -372,7 +373,10 @@
         const clamp = (v, m) => Math.min(m - 1, Math.max(0, Math.round(v)));
         const a = { x: clamp(pos.x * proc.k, proc.w), y: clamp(pos.y * proc.k, proc.h) };
         const b = { x: clamp(target.x * proc.k, proc.w), y: clamp(target.y * proc.k, proc.h) };
-        const leg = routeLeg(proc.cost, proc.w, proc.h, a, b);
+        // jedno przecięcie warstwicy = pół cięcia w górę = (cięcie / 2) * CLIMB_FACTOR metrów po płaskim
+        const interval = parseFloat($('lcontour').value);
+        const climb = interval > 0 ? { contour: proc.contour, perCrossing: interval / 2 * CLIMB_FACTOR * cal.pxPerM * proc.k } : null;
+        const leg = routeLeg(proc.cost, proc.w, proc.h, a, b, climb);
         routeAt = Date.now();
         if (!leg.best) {
           routeNote = 'Nie znajduję przejścia do celu (teren nie do przejścia) – strzałka pokazuje kierunek na wprost.';
@@ -468,6 +472,11 @@
 
   $('ltarget').addEventListener('click', () => setTapMode('target'));
   $('lmode').addEventListener('change', () => { proc = null; if (target && !(route && route.custom)) computeRoute(); });
+  try { const saved = localStorage.getItem('bno-contour'); if (saved != null) $('lcontour').value = saved; } catch (err) { /* nieistotne */ }
+  $('lcontour').addEventListener('change', () => {
+    try { localStorage.setItem('bno-contour', $('lcontour').value); } catch (err) { /* jw. */ }
+    if (target && !(route && route.custom)) computeRoute();
+  });
 
   // ---------- kamera ----------
   async function setCamera(on) {

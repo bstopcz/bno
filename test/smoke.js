@@ -128,6 +128,28 @@ print('OK', {
   print('OK georeferencja');
 }
 
+// --- przewyższenia: trzy warstwice w poprzek przebiegu, obejście bokiem jest dłuższe, ale płaskie ---
+{
+  rect(0, 0, W, H, [250, 250, 248]);
+  for (const y of [60, 100, 140]) rect(0, y, 220, y + 2, [205, 95, 20]);
+  rect(150, 0, 152, H, [20, 20, 20]); // ścieżka prosto przez warstwice (zasłania brąz)
+  const res = analyze(data, W, H, 'forest');
+  assert.strictEqual(res.contour[60 * W + 100], 1, 'brązowa linia to warstwica');
+  assert.strictEqual(res.contour[60 * W + 150], 1, 'warstwica pod ścieżką ma zostać warstwicą');
+  assert.strictEqual(res.contour[80 * W + 100], 0);
+  const k4 = costGrid(res.cls), a = { x: 150, y: 20 }, b = { x: 150, y: 180 };
+  const flat = routeLeg(k4, W, H, a, b);
+  assert.strictEqual(flat.best.crossings, undefined);
+  const mild = routeLeg(k4, W, H, a, b, { contour: res.contour, perCrossing: 10 });
+  assert.strictEqual(mild.best.crossings, 3, 'przy małej karze biegniemy ścieżką przez 3 warstwice');
+  assert.ok(Math.abs(mild.best.cost - flat.best.cost - 30) < 1, 'kara = 3 przecięcia po 10');
+  const steep = routeLeg(k4, W, H, a, b, { contour: res.contour, perCrossing: 150 });
+  assert.strictEqual(steep.best.crossings, 0, 'przy dużej karze obiegamy warstwice');
+  assert.ok(steep.best.length > mild.best.length * 1.3);
+  assert.strictEqual(steep.straight.crossings, 3);
+  print('OK przewyższenia');
+}
+
 // wydajność na rozdzielczości roboczej telefonu
 const BW = 1600, BH = 1200;
 const big = new Float32Array(BW * BH).fill(1.6);

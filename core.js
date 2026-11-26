@@ -334,7 +334,65 @@
     for (let q = 0; q < found.length; q += 2) cls[found[q]] = found[q + 1];
   }
 
-  // Zwraca { cls: Uint8Array klas terenu, features: rozpoznane symbole punktowe }.
+  // Warstwice to cienkie linie, które na zdjęciu zlewają się z tłem (brąz na zieleni wychodzi oliwkowo),
+  // więc sam próg koloru ich nie łapie. Szukamy "grzbietów": pikseli wyraźnie bardziej czerwonych (r - g)
+  // niż otoczenie po OBU stronach w którymś kierunku. Krawędź plamy (żółte pole, droga) grzbietem nie jest.
+  function detectContours(data, w, h, kr, kg, kb, d, minSize) {
+    const n = w * h;
+    const a = new Int16Array(n), ok = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const o = i * 4;
+      const r = Math.min(255, data[o] * kr), g = Math.min(255, data[o + 1] * kg), b = Math.min(255, data[o + 2] * kb);
+      a[i] = r - g;
+      ok[i] = r - g >= 12 && r - b >= 20 && r >= 110 ? 1 : 0; // nie czerń, nie fiolet, nie zieleń
+    }
+    const raw = new Uint8Array(n);
+    const T = 18, dw = d * w;
+    for (let y = d; y < h - d; y++) {
+      for (let x = d; x < w - d; x++) {
+        const i = y * w + x;
+        if (!ok[i]) continue;
+        const v = a[i] - T;
+        if ((a[i - d] < v && a[i + d] < v) || (a[i - dw] < v && a[i + dw] < v) ||
+            (a[i - dw - d] < v && a[i + dw + d] < v) || (a[i - dw + d] < v && a[i + dw - d] < v)) raw[i] = 1;
+      }
+    }
+    // drobiazgi (kopczyki, dołki, kreski spadku, szum) to nie warstwice
+    components(raw, w, h, (buf, count, x0, y0, x1, y1) => {
+      if (x1 - x0 < minSize && y1 - y0 < minSize) for (let k = 0; k < count; k++) raw[buf[k]] = 0;
+    });
+    return raw;
+  }
+
+  // Warstwica schowana pod ścieżką, drogą albo nadrukiem trasy dalej jest warstwicą:
+  // bez tego bieg ścieżką wyglądałby na płaski, bo czarna kreska zasłania brąz.
+  // cover[i] = 1 tam, gdzie coś mogło zasłonić warstwicę.
+  function bridgeContours(contour, cover, w, h, k) {
+    const scan = (x, y, dx, dy) => {
+      for (let s = 1; s <= k; s++) {
+        const nx = x + dx * s, ny = y + dy * s;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) return false;
+        const i = ny * w + nx;
+        if (contour[i]) return true;
+        if (!cover[i]) return false;
+      }
+      return false;
+    };
+    const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    const found = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (contour[i] || !cover[i]) continue;
+        for (const [dx, dy] of dirs) {
+          if (scan(x, y, dx, dy) && scan(x, y, -dx, -dy)) { found.push(i); break; }
+        }
+      }
+    }
+    for (const i of found) contour[i] = 1;
+  }
+
+  // Zwraca { cls: klasy terenu, features: symbole punktowe, contour: maska warstwic }.
   function analyze(data, w, h, mode) {
     const sprint = mode === 'sprint';
     const n = w * h;
@@ -353,6 +411,23 @@
     const P = Math.max(6, Math.round(Math.max(w, h) / 150));
     const features = [];
     extractPoints(cls, w, h, P, features);
+
+    // warstwice: długie brązowe linie (małe brązowe symbole są już wycięte)
+    const contour = detectContours(data, w, h, kr, kg, kb, Math.max(2, r - 1), P * 2);
+    for (let i = 0; i < n; i++) if (cls[i] === T.BROWN) contour[i] = 1;
+    // droga (beżowy pas z brązową obwódką) to nie warstwica: czyścimy ją razem z 2 px marginesu,
+    // a prawdziwe warstwice przecinające drogę łączymy potem z powrotem w poprzek
+    const road = integral(opening(maskOf(T.PAVED), w, h, 1), w, h);
+    const cover = new Uint8Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x, c = cls[i];
+        const nearRoad = boxSum(road, w, h, x, y, 2) > 0;
+        if (nearRoad) contour[i] = 0;
+        cover[i] = nearRoad || c === T.PATH || c === T.PAVED || c === T.PURPLE || c === T.OVERLAY ? 1 : 0;
+      }
+    }
+    bridgeContours(contour, cover, w, h, r + 6);
     for (let i = 0; i < n; i++) if (cls[i] === T.BROWN) cls[i] = T.OVERLAY;
 
     // gruba czarna/szara plama = budynek; cienka linia = ścieżka (las) albo mur/płot (sprint)
@@ -393,7 +468,7 @@
     for (let i = 0; i < n; i++) if (cls[i] === T.PURPLE) cls[i] = T.OVERLAY;
     fillOverlay(cls, w, h);
     sealSlivers(cls, w, h, 3);
-    return { cls, features };
+    return { cls, features, contour };
   }
 
   function classify(data, w, h, mode) {
@@ -406,13 +481,32 @@
     return cost;
   }
 
+  // ---- przewyższenia ----
+  // climb = { contour: Uint8Array (1 = piksel warstwicy), perCrossing: liczba } albo null/undefined.
+  // perCrossing to koszt przecięcia jednej warstwicy w "pikselach po ścieżce"; mnożymy go jeszcze przez
+  // koszt terenu, więc metr w górę w zielonym kosztuje tyle, co CLIMB_FACTOR metrów po płaskim zielonym.
+  //
+  // Dlaczego liczymy przecięcia, skoro z obrazu nie wiadomo, gdzie jest góra, a gdzie dół:
+  //   suma podejść = (liczba przecięć + różnica wysokości start-cel / cięcie) / 2 * cięcie,
+  // a różnica wysokości start-cel jest taka sama dla każdego wariantu. Mniej przecięć = mniej podejść,
+  // więc każde przecięcie liczymy jako pół cięcia warstwicowego w górę.
+  const CLIMB_FACTOR = 6;
+
+  function crossesContour(contour, w, i, j, x, y, nx, ny) {
+    if (contour[i]) return false;
+    if (contour[j]) return true;
+    // ruch po skosie może przeskoczyć cienką ukośną linię bez wejścia w jej piksel
+    return nx !== x && ny !== y && contour[y * w + nx] === 1 && contour[ny * w + x] === 1;
+  }
+
   // A* po siatce 8-sąsiedzkiej. Zwraca tablicę indeksów komórek od startu do celu
   // albo null, gdy cel jest odcięty terenem nie do przejścia (koszt Infinity).
-  function findPath(cost, w, h, sx, sy, tx, ty) {
+  function findPath(cost, w, h, sx, sy, tx, ty, climb) {
     const n = w * h, start = sy * w + sx, goal = ty * w + tx;
     const g = new Float32Array(n).fill(Infinity);
     const parent = new Int32Array(n).fill(-1);
     const closed = new Uint8Array(n);
+    const contour = climb ? climb.contour : null, perCrossing = climb ? climb.perCrossing : 0;
     const hf = [], hn = [];
     const push = (f, node) => {
       let i = hf.length;
@@ -465,7 +559,8 @@
           if (closed[j] || cost[j] === Infinity) continue;
           // po skosie nie przeciskamy się między dwiema komórkami przeszkody
           if (dx && dy && (cost[y * w + nx] === Infinity || cost[ny * w + x] === Infinity)) continue;
-          const ng = g[i] + (dx && dy ? Math.SQRT2 : 1) * (cost[i] + cost[j]) * 0.5;
+          let ng = g[i] + (dx && dy ? Math.SQRT2 : 1) * (cost[i] + cost[j]) * 0.5;
+          if (contour && crossesContour(contour, w, i, j, x, y, nx, ny)) ng += perCrossing * cost[j];
           if (ng < g[j]) {
             g[j] = ng; parent[j] = i;
             push(ng + heur(nx, ny), j);
@@ -480,31 +575,44 @@
     return path;
   }
 
-  // cost = czas w "pikselach po ścieżce", length = długość w pikselach
-  function pathStats(path, cost, w) {
-    let c = 0, len = 0;
+  // cost = czas w "pikselach po ścieżce" (z podejściami), length = długość w pikselach,
+  // crossings = liczba przeciętych warstwic (tylko gdy podano climb)
+  function pathStats(path, cost, w, climb) {
+    let c = 0, len = 0, crossings = 0;
     for (let k = 1; k < path.length; k++) {
       const a = path[k - 1], b = path[k];
-      const d = (a % w !== b % w && ((a / w) | 0) !== ((b / w) | 0)) ? Math.SQRT2 : 1;
+      const ax = a % w, ay = (a / w) | 0, bx = b % w, by = (b / w) | 0;
+      const d = (ax !== bx && ay !== by) ? Math.SQRT2 : 1;
       len += d;
       c += d * (cost[a] + cost[b]) * 0.5;
+      if (climb && crossesContour(climb.contour, w, a, b, ax, ay, bx, by)) { crossings++; c += climb.perCrossing * cost[b]; }
     }
-    return { cost: c, length: len };
+    const out = { cost: c, length: len };
+    if (climb) out.crossings = crossings;
+    return out;
   }
 
-  function lineStats(cost, w, sx, sy, tx, ty) {
+  function lineStats(cost, w, sx, sy, tx, ty, climb) {
     const dist = Math.hypot(tx - sx, ty - sy);
     const steps = Math.max(1, Math.ceil(dist));
-    let c = 0;
+    let c = 0, extra = 0, crossings = 0, prev = 1;
     for (let k = 0; k < steps; k++) {
       const t = (k + 0.5) / steps;
-      c += cost[Math.round(sy + (ty - sy) * t) * w + Math.round(sx + (tx - sx) * t)];
+      const i = Math.round(sy + (ty - sy) * t) * w + Math.round(sx + (tx - sx) * t);
+      c += cost[i];
+      if (climb) {
+        const on = climb.contour[i];
+        if (on && !prev) { crossings++; extra += climb.perCrossing * cost[i]; }
+        prev = on;
+      }
     }
-    return { cost: c * dist / steps, length: dist };
+    const out = { cost: c * dist / steps + extra, length: dist };
+    if (climb) out.crossings = crossings;
+    return out;
   }
 
   // Drugi wariant: karzemy okolice środka najlepszej trasy i szukamy jeszcze raz.
-  function findAlternative(cost, w, h, best, sx, sy, tx, ty) {
+  function findAlternative(cost, w, h, best, sx, sy, tx, ty, climb) {
     const path = best.path;
     const from = Math.floor(path.length * 0.15), to = Math.ceil(path.length * 0.85);
     const R = Math.max(6, Math.round(best.length * 0.06));
@@ -519,7 +627,7 @@
         }
       }
     }
-    const altPath = findPath(penal, w, h, sx, sy, tx, ty);
+    const altPath = findPath(penal, w, h, sx, sy, tx, ty, climb);
     if (!altPath) return null;
     let inside = 0, total = 0;
     for (let k = Math.floor(altPath.length * 0.15); k < altPath.length * 0.85; k++) {
@@ -527,9 +635,9 @@
       if (mark[altPath[k]]) inside++;
     }
     if (!total || inside / total > 0.5) return null; // to praktycznie ta sama trasa
-    const stats = pathStats(altPath, cost, w);
+    const stats = pathStats(altPath, cost, w, climb);
     if (stats.cost > best.cost * 1.5) return null; // za słaby, żeby go pokazywać
-    return { path: altPath, cost: stats.cost, length: stats.length };
+    return Object.assign({ path: altPath }, stats);
   }
 
   // Punkt stuknięty na przeszkodzie (np. róg budynku) przesuwamy na najbliższe przebieżne miejsce.
@@ -552,18 +660,18 @@
   }
 
   // Przebieg między dwoma punktami: najlepszy wariant, alternatywa i linia prosta.
-  // best === null oznacza brak przejścia.
-  function routeLeg(cost, w, h, p, q) {
-    const straight = lineStats(cost, w, p.x, p.y, q.x, q.y);
+  // best === null oznacza brak przejścia. climb (opcjonalnie) włącza liczenie podejść.
+  function routeLeg(cost, w, h, p, q, climb) {
+    const straight = lineStats(cost, w, p.x, p.y, q.x, q.y, climb);
     const a = nearestPassable(cost, w, h, p), b = nearestPassable(cost, w, h, q);
-    const path = a && b ? findPath(cost, w, h, a.x, a.y, b.x, b.y) : null;
+    const path = a && b ? findPath(cost, w, h, a.x, a.y, b.x, b.y, climb) : null;
     if (!path) return { best: null, alt: null, straight };
-    const best = Object.assign({ path }, pathStats(path, cost, w));
-    const alt = path.length > 20 ? findAlternative(cost, w, h, best, a.x, a.y, b.x, b.y) : null;
+    const best = Object.assign({ path }, pathStats(path, cost, w, climb));
+    const alt = path.length > 20 ? findAlternative(cost, w, h, best, a.x, a.y, b.x, b.y, climb) : null;
     return { best, alt, straight };
   }
 
-  const api = { T, TERRAIN, POINT_NAMES, analyze, classify, costGrid, findPath, pathStats, lineStats, routeLeg };
+  const api = { T, TERRAIN, POINT_NAMES, CLIMB_FACTOR, analyze, classify, costGrid, findPath, pathStats, lineStats, routeLeg };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BnoCore = api;
 })(typeof self !== 'undefined' ? self : this);

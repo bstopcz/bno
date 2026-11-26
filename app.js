@@ -8,7 +8,7 @@
   const canvas = $('map');
   const ctx = canvas.getContext('2d');
 
-  let photo = null, pixels = null, classView = null, cost = null;
+  let photo = null, pixels = null, classView = null, cost = null, contour = null;
   let W = 0, H = 0, zoom = 1;
   let points = [], legs = [];
   let showClasses = false, busy = false;
@@ -27,7 +27,9 @@
 
   // Rozpoznaje teren w wybranym trybie i przelicza już postawione przebiegi.
   function analyze() {
-    const { cls, features } = analyzeMap(pixels, W, H, $('mode').value);
+    const res = analyzeMap(pixels, W, H, $('mode').value);
+    const cls = res.cls, features = res.features;
+    contour = res.contour;
     cost = costGrid(cls);
     const out = new ImageData(W, H);
     for (let i = 0; i < cls.length; i++) {
@@ -39,7 +41,7 @@
     vctx.putImageData(out, 0, 0);
     drawFeatures(vctx, features);
     legs = [];
-    for (let i = 1; i < points.length; i++) legs.push(routeLeg(cost, W, H, points[i - 1], points[i]));
+    for (let i = 1; i < points.length; i++) legs.push(routeLeg(cost, W, H, points[i - 1], points[i], climb()));
     draw(); renderInfo();
   }
 
@@ -63,6 +65,13 @@
         }
       }
     }
+  }
+
+  // Podejścia liczymy tylko, gdy znamy skalę: szerokość zdjęcia w metrach terenu.
+  function climb() {
+    const interval = parseFloat($('contour').value), span = parseFloat(String($('spanm').value).replace(',', '.'));
+    if (!(interval > 0) || !(span > 0)) return null;
+    return { contour, perCrossing: interval / 2 * BnoCore.CLIMB_FACTOR * W / span };
   }
 
   function runBusy(message, work) {
@@ -101,9 +110,11 @@
     }
   });
 
-  $('mode').addEventListener('change', () => {
-    if (pixels && !busy) runBusy('Analizuję mapę…', analyze);
-  });
+  for (const id of ['mode', 'contour', 'spanm']) {
+    $(id).addEventListener('change', () => {
+      if (pixels && !busy) runBusy('Analizuję mapę…', analyze);
+    });
+  }
 
   canvas.addEventListener('click', (e) => {
     if (!cost || busy) return;
@@ -114,7 +125,7 @@
     draw();
     if (points.length < 2) { status('Teraz stuknij pierwszy punkt kontrolny.'); return; }
     runBusy('Liczę wariant…', () => {
-      legs.push(routeLeg(cost, W, H, points[points.length - 2], points[points.length - 1]));
+      legs.push(routeLeg(cost, W, H, points[points.length - 2], points[points.length - 1], climb()));
       draw(); renderInfo();
     });
   });
@@ -202,6 +213,7 @@
         ? 'biegnij praktycznie na wprost.'
         : `najlepszy wariant (czerwony) jest o ${extra}% dłuższy od prostej, ale ok. ${gain}% szybszy.`;
     }
+    if (leg.best.crossings != null) text += ` Przecina ${leg.best.crossings} warstwic.`;
     if (leg.alt) {
       const slower = Math.round((leg.alt.cost / leg.best.cost - 1) * 100);
       text += ` Alternatywa (niebieska przerywana): ${slower}% wolniejsza.`;
