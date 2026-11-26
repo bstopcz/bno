@@ -4,3 +4,5 @@ przyklad-mapa.png
 *.ocd
 treningi/mapytrening/
 desktop.ini
+# paczki treningow przekazywane do publikacji
+*.zip

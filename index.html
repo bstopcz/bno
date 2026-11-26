@@ -204,7 +204,7 @@
     <summary>Kto dodaje treningi</summary>
     <p>Listę treningów i mapy trzyma repozytorium strony. Zmienić je może tylko administrator, czyli osoba
        z prawem zapisu do tego repozytorium – nikt inny nie doda ani nie podmieni mapy.</p>
-    <p>Komplet plików treningu administrator przygotowuje w zakładce „Generacja danych”.</p>
+    <p>Paczkę treningu (jeden plik ZIP) przygotowuje się w zakładce „Generacja danych” i przekazuje administratorowi.</p>
   </details>
 </main>
 
@@ -498,24 +498,26 @@
 
     <h2>Krok 4. Wygeneruj i sprawdź</h2>
     <div class="tools">
-      <button id="ggen" class="on">Przygotuj pliki treningu</button>
+      <button id="ggen" class="on">Przygotuj paczkę treningu (ZIP)</button>
       <button id="gpreview">Zobacz mapę w „Na żywo”</button>
     </div>
     <div id="gfiles"></div>
-    <textarea id="gout" rows="16" readonly hidden aria-label="Wpis treningu"></textarea>
+    <textarea id="gout" rows="12" readonly hidden aria-label="Wpis treningu (jest też w paczce ZIP)"></textarea>
     <div class="tools"><button id="gcopy" hidden>Kopiuj wpis</button></div>
 
-    <h2>Krok 5. Opublikuj</h2>
+    <h2>Krok 5. Przekaż do publikacji</h2>
     <ol>
-      <li>Pobierz oba pliki: <b>obraz mapy</b> (<code>.jpg</code>) i <b>siatkę terenu</b> (<code>.siatka.png</code>)
-          i zapisz je w folderze <code>treningi</code> projektu, bez zmiany nazw.</li>
-      <li>Skopiuj wpis z okna powyżej i dopisz go do pliku <code>treningi/treningi.json</code> (albo przekaż osobie, która publikuje stronę).</li>
+      <li>Pobierz plik <b>ZIP</b>. Jest w nim wszystko, czego potrzeba: obraz mapy (<code>.jpg</code>), siatka terenu
+          (<code>.siatka.png</code>) i wpis treningu (<code>.json</code>) z nazwą, opisem, dojazdem i kalibracją.</li>
+      <li>Przekaż ten jeden plik osobie, która publikuje stronę (albo zapisz go w folderze <code>treningi/mapytrening</code> projektu).
+          Ona rozpakowuje go do folderu <code>treningi</code> i dopisuje wpis do <code>treningi/treningi.json</code>.</li>
       <li>Po opublikowaniu trening pojawi się w zakładce „Treningi”. Uczestnik dostaje gotowy obraz, teren i kalibrację –
           jego telefon niczego nie przelicza.</li>
     </ol>
-    <p class="note">Co jest w plikach: obraz to mapa zmniejszona do 4000 pikseli na dłuższym boku. Siatka terenu to tabela
-       kategorii (droga, las, płot, budynek…) w polach po kilkadziesiąt centymetrów oraz ślad warstwic – nie da się z niej
-       odtworzyć pliku OCAD. Plików <code>.ocd</code> i <code>.pdf</code> nie wrzucaj do folderu <code>treningi</code>.</p>
+    <p class="note">Samo wygenerowanie niczego nie publikuje: strona nie ma jak zapisać plików na serwerze, więc trening
+       pojawia się dopiero po ręcznym dodaniu. Co jest w paczce: obraz to mapa zmniejszona do 4000 pikseli na dłuższym boku.
+       Siatka terenu to tabela kategorii (droga, las, płot, budynek…) w polach po kilkadziesiąt centymetrów oraz ślad warstwic –
+       nie da się z niej odtworzyć pliku OCAD. Plików <code>.ocd</code> i <code>.pdf</code> nie dołączaj.</p>
   </div>
 </main>
 

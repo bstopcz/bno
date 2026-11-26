@@ -349,7 +349,7 @@
     ensureProc();
     for (const u of exportUrls) URL.revokeObjectURL(u);
     exportUrls = [];
-    const id = (meta.nazwa || mapName).replace(/\.[^.]+$/, '').toLowerCase().replace(/ł/g, 'l').normalize('NFD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mapa';
+    const id = (meta.nazwa || mapName).replace(/\.[^.]+$/, '').toLowerCase().replace(/ł/g, 'l').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'mapa';
     // 1. obraz mapy jako JPG
     const es = Math.min(1, EXPORT_DIM / Math.max(W, H));
     const ic = document.createElement('canvas');
