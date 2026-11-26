@@ -343,7 +343,7 @@
       ctx.moveTo(points[i].x, points[i].y); ctx.lineTo(points[i + 1].x, points[i + 1].y);
       stroke('#666', lw * 0.8, dash);
     });
-    for (const leg of legs) if (leg.alt) strokePath(leg.alt.path, '#1565c0', lw * 0.8, dash);
+    for (const leg of legs) (leg.variants || []).slice(1).forEach((v, k) => strokePath(v.path, k ? '#ef6c00' : '#1565c0', lw * 0.8, dash));
     for (const leg of legs) if (leg.best) strokePath(leg.best.path, '#e53935', lw);
     const r = Math.max(9, W / 90);
     ctx.font = `bold ${Math.round(r * 1.4)}px sans-serif`;
@@ -376,10 +376,15 @@
       if (!hasScale()) text += ' Podaj skalę i DPI, żeby podejścia wpływały na wybór wariantu.';
     }
     if (hasScale()) text += ` Długość ok. ${Math.round(leg.best.length * metersPerPx() / 10) * 10} m.`;
-    if (leg.alt) {
-      const slower = Math.round((leg.alt.cost / leg.best.cost - 1) * 100);
-      text += ` Alternatywa (niebieska przerywana): ${slower}% wolniejsza.`;
-    }
+    const easy = (v) => `${Math.round(v.easy * 100)}% łatwym terenem`;
+    if (leg.variants.length > 1) text += ` Z tego ${easy(leg.best)}.`;
+    leg.variants.slice(1).forEach((v, k) => {
+      const slower = Math.round((v.cost / leg.best.cost - 1) * 100);
+      const longer = Math.round((v.length / leg.best.length - 1) * 100);
+      text += ` Wariant ${'BC'[k]} (${k ? 'pomarańczowy' : 'niebieski'} przerywany): `
+        + (slower < 3 ? 'praktycznie tak samo szybki' : `${slower}% wolniejszy`)
+        + `, ${longer === 0 ? 'tej samej długości' : Math.abs(longer) + '% ' + (longer > 0 ? 'dłuższy' : 'krótszy')}, ${easy(v)}.`;
+    });
     return text;
   }
 

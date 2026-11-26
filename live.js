@@ -17,9 +17,10 @@
   const CAM_HFOV = 55;     // przybliżony poziomy kąt widzenia kamery telefonu (pionowo)
   const PUNCH_M = 10;      // tak blisko środka kółka punkt zalicza się sam (przy słabym GPS do 20 m)
 
+  const ALT_COLORS = ['#1565c0', '#ef6c00'];
   const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
   const el = {};
-  for (const [name, tag] of [['course', 'g'], ['track', 'polyline'], ['alt', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
+  for (const [name, tag] of [['course', 'g'], ['track', 'polyline'], ['alt', 'polyline'], ['alt2', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
     ['draw', 'polyline'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
     el[name] = document.createElementNS(SVG, tag);
     el[name].setAttribute('class', 'l-' + name);
@@ -130,12 +131,15 @@
     }
     el.route.style.display = route ? '' : 'none';
     if (route) { el.route.setAttribute('points', fmt(route.pts)); el.route.setAttribute('stroke-width', 4 * u); }
-    const other = routes.find((r) => r !== route);
-    el.alt.style.display = other ? '' : 'none';
-    if (other) {
-      el.alt.setAttribute('points', fmt(other.pts)); el.alt.setAttribute('stroke-width', 3 * u);
-      el.alt.setAttribute('stroke-dasharray', `${9 * u} ${7 * u}`);
-    }
+    const others = routes.filter((r) => r !== route);
+    [el.alt, el.alt2].forEach((line, i) => { // niewybrane warianty: przerywane, pierwszy niebieski, drugi pomarańczowy
+      const other = others[i];
+      line.style.display = other ? '' : 'none';
+      if (!other) return;
+      line.setAttribute('class', 'l-alt'); line.style.stroke = ALT_COLORS[i];
+      line.setAttribute('points', fmt(other.pts)); line.setAttribute('stroke-width', 3 * u);
+      line.setAttribute('stroke-dasharray', `${9 * u} ${7 * u}`);
+    });
 
     drawCourse(u);
     const pos = hidden() ? null : position();
@@ -716,10 +720,11 @@
     pts.push({ x: target.x, y: target.y });
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
-    return { pts, cum, cost: part.cost, crossings: part.crossings };
+    return { pts, cum, cost: part.cost, crossings: part.crossings, easy: part.easy };
   }
 
-  // Przyciski wyboru wariantu (A = najszybszy, B = alternatywa).
+  // Przyciski wyboru wariantu (A = najszybszy, B i C = inne drogi, nie więcej niż 30% wolniejsze).
+  // Kolor paska na przycisku = kolor linii na mapie: wybrany czerwony, pozostałe niebieski i pomarańczowy.
   let variantsKey = '';
   function renderVariants() {
     const len = (r) => (cal ? Math.round(r.cum[r.cum.length - 1] / cal.pxPerM / 10) * 10 : null);
@@ -729,15 +734,23 @@
     const box = $('lvariants');
     box.replaceChildren();
     box.hidden = routes.length < 2 && !(route && route.custom);
+    const base = BnoStore.summary().base;
     routes.forEach((r, i) => {
       const b = document.createElement('button');
       if (r.custom) b.textContent = 'Twoja trasa' + (len(r) == null ? '' : `: ${len(r)} m`);
       else {
         const slower = Math.round((r.cost / routes[0].cost - 1) * 100);
-        b.textContent = `Wariant ${'AB'[i]}: ${len(r)} m` + (r.crossings == null ? '' : ` · ${r.crossings} warstw.`)
-          + (i === 0 ? ' · najszybszy' : ` · ok. ${slower}% wolniejszy`);
+        // znamy Twoje tempo po ścieżce -> podajemy czas w minutach, inaczej tylko porównanie w procentach
+        const secs = (x) => (base && cal ? x.cost / proc.k / cal.pxPerM * base : null);
+        const speed = i === 0 ? (secs(r) == null ? 'najszybszy' : `ok. ${mmss(secs(r) * 1000)} · najszybszy`)
+          : slower < 3 ? 'praktycznie tak samo szybki'
+            : secs(r) == null ? `ok. ${slower}% wolniejszy` : `ok. +${mmss((secs(r) - secs(routes[0])) * 1000)} (${slower}%)`;
+        b.textContent = `${'ABC'[i]}: ${len(r)} m` + (r.crossings == null ? '' : ` · ${r.crossings} warstw.`)
+          + (r.easy == null ? '' : ` · łatwy teren ${Math.round(r.easy * 100)}%`) + ' · ' + speed;
       }
       b.classList.toggle('on', r === route);
+      const k = routes.filter((x) => x !== route).indexOf(r);
+      b.style.borderLeft = '6px solid ' + (r === route ? '#e53935' : ALT_COLORS[k] || '#888');
       b.addEventListener('click', () => { route = r; refresh(); });
       box.append(b);
     });
@@ -763,7 +776,7 @@
         if (!leg.best) {
           routeNote = 'Nie znajduję przejścia do celu (teren nie do przejścia) – strzałka pokazuje kierunek na wprost.';
         } else {
-          routes = [leg.best, leg.alt].filter(Boolean).map(toRoute);
+          routes = leg.variants.map(toRoute);
           route = routes[0];
           routeNote = '';
         }

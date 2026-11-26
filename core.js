@@ -727,33 +727,122 @@
     return out;
   }
 
-  // Drugi wariant: karzemy okolice środka najlepszej trasy i szukamy jeszcze raz.
-  function findAlternative(cost, w, h, best, sx, sy, tx, ty, climb) {
-    const path = best.path;
-    const from = Math.floor(path.length * 0.15), to = Math.ceil(path.length * 0.85);
-    const R = Math.max(6, Math.round(best.length * 0.06));
+  // ---- warianty ----
+  const EASY_COST = 1.3;      // teren o mnożniku do tej wartości (ścieżki, drogi, otwarte) liczymy jako "łatwy bieg"
+  const VARIANT_MAX = 3;      // tyle wariantów najwyżej pokazujemy
+  const VARIANT_SLOWER = 1.3; // wariant wolniejszy od najszybszego o więcej niż 30% nie jest sensownym wyborem
+  const SMOOTH_TOL = 1.01;    // prostujemy odcinek, gdy prosta nie jest wolniejsza o więcej niż 1%
+
+  // Odcinek prosty między dwoma polami siatki: czas, długość (zwykła, nie "po kratkach"), przecięte warstwice
+  // i długość w łatwym terenie. null = prosta wchodzi w teren nie do przejścia. Pola po drodze trafiają do cells.
+  function segStats(cost, w, ax, ay, bx, by, climb, cells) {
+    const dist = Math.hypot(bx - ax, by - ay);
+    const steps = Math.max(1, Math.ceil(dist * 2));
+    let px = ax, py = ay, pi = ay * w + ax, pc = cost[pi];
+    let sum = 0, extra = 0, crossings = 0, easy = 0;
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      const x = Math.round(ax + (bx - ax) * t), y = Math.round(ay + (by - ay) * t), i = y * w + x, c = cost[i];
+      if (c === Infinity) return null;
+      if (i !== pi) {
+        if (x !== px && y !== py && (cost[py * w + x] === Infinity || cost[y * w + px] === Infinity)) return null;
+        if (climb && crossesContour(climb.contour, w, pi, i, px, py, x, y)) { crossings++; extra += climb.perCrossing * c; }
+        if (cells) cells.push(i);
+        px = x; py = y; pi = i;
+      }
+      sum += (pc + c) * 0.5;
+      if (pc <= EASY_COST && c <= EASY_COST) easy++;
+      pc = c;
+    }
+    return { cost: sum * dist / steps + extra, length: dist, crossings, easy: easy * dist / steps };
+  }
+
+  // Trasa z A* idzie "po kratkach": schodkami i drobnymi zygzakami, których nikt tak nie pobiegnie, a jej długość
+  // jest zawyżona. Prostujemy ją: kolejne pola łączymy prostą wszędzie tam, gdzie prosta nie jest wolniejsza.
+  // Zwraca { path, cost, length, crossings, easy } liczone już po prostych odcinkach.
+  function smoothPath(path, cost, w, climb) {
+    const n = path.length;
+    const pre = new Float64Array(n); // czas trasy po kratkach od początku do pola k
+    for (let k = 1; k < n; k++) {
+      const a = path[k - 1], b = path[k];
+      const ax = a % w, ay = (a / w) | 0, bx = b % w, by = (b / w) | 0;
+      let c = ((ax !== bx && ay !== by) ? Math.SQRT2 : 1) * (cost[a] + cost[b]) * 0.5;
+      if (climb && crossesContour(climb.contour, w, a, b, ax, ay, bx, by)) c += climb.perCrossing * cost[b];
+      pre[k] = pre[k - 1] + c;
+    }
+    const seg = (a, b, cells) => segStats(cost, w, path[a] % w, (path[a] / w) | 0, path[b] % w, (path[b] / w) | 0, climb, cells);
+    const out = { path: [path[0]], cost: 0, length: 0, crossings: 0, easy: 0 };
+    let a = 0;
+    while (a < n - 1) {
+      let b = a + 1, j = a + 2;
+      while (j < n) {
+        const s = seg(a, j);
+        if (!s || s.cost > (pre[j] - pre[a]) * SMOOTH_TOL + 1e-6) break;
+        b = j;
+        if (j === n - 1) break;
+        j = Math.min(n - 1, j + Math.max(1, (j - a) >> 3));
+      }
+      const s = seg(a, b, out.path);
+      if (s) { out.cost += s.cost; out.length += s.length; out.crossings += s.crossings; out.easy += s.easy; }
+      else { out.path.push(path[b]); out.cost += pre[b] - pre[a]; out.length += 1; } // nie powinno się zdarzyć
+      a = b;
+    }
+    out.easy = out.length ? out.easy / out.length : 0;
+    if (!climb) delete out.crossings;
+    return out;
+  }
+
+  // Pas o promieniu R wokół środkowej części trasy (bez okolic startu i celu, gdzie warianty i tak się schodzą).
+  function bandAround(path, w, h, R) {
     const mark = new Uint8Array(w * h);
-    const penal = new Float32Array(cost);
+    const from = Math.floor(path.length * 0.15), to = Math.ceil(path.length * 0.85);
     for (let k = from; k < to; k += 2) {
       const px = path[k] % w, py = (path[k] / w) | 0;
-      for (let y = Math.max(0, py - R); y <= Math.min(h - 1, py + R); y++) {
-        for (let x = Math.max(0, px - R); x <= Math.min(w - 1, px + R); x++) {
-          const i = y * w + x;
-          if (!mark[i]) { mark[i] = 1; penal[i] *= 3; }
-        }
-      }
+      for (let y = Math.max(0, py - R); y <= Math.min(h - 1, py + R); y++) mark.fill(1, y * w + Math.max(0, px - R), y * w + Math.min(w - 1, px + R) + 1);
     }
-    const altPath = findPath(penal, w, h, sx, sy, tx, ty, climb);
-    if (!altPath) return null;
+    return mark;
+  }
+  // Jaka część środka trasy leży w pasie innej trasy (1 = ta sama droga).
+  function shareInside(path, mark) {
     let inside = 0, total = 0;
-    for (let k = Math.floor(altPath.length * 0.15); k < altPath.length * 0.85; k++) {
-      total++;
-      if (mark[altPath[k]]) inside++;
+    for (let k = Math.floor(path.length * 0.15); k < path.length * 0.85; k++) { total++; if (mark[path[k]]) inside++; }
+    return total ? inside / total : 1;
+  }
+
+  // Warianty przebiegu. Szukamy kandydatów na cztery sposoby:
+  //   1) najszybszy według założeń,
+  //   2) "trzymaj się ścieżek" – różnice między terenami liczone mocniej,
+  //   3) "bardziej na wprost" – różnice między terenami liczone słabiej,
+  //   4) obejście – okolice środka najszybszego wariantu utrudnione, więc trasa idzie inną stroną.
+  // Każdego kandydata prostujemy i oceniamy PRAWDZIWYM czasem. Zostają najwyżej trzy: różne od siebie
+  // (ponad połowa środka poza pasem pozostałych) i nie wolniejsze od najszybszego o więcej niż 30%.
+  function findVariants(cost, w, h, sx, sy, tx, ty, climb) {
+    const first = findPath(cost, w, h, sx, sy, tx, ty, climb);
+    if (!first) return null;
+    const cands = [smoothPath(first, cost, w, climb)];
+    if (first.length > 20) {
+      const n = w * h, R = Math.max(6, Math.round(cands[0].length * 0.06));
+      const tmp = new Float32Array(n);
+      for (const f of [2.5, 0.4]) {
+        for (let i = 0; i < n; i++) tmp[i] = Math.max(1, 1 + (cost[i] - 1) * f); // Infinity zostaje Infinity
+        const p = findPath(tmp, w, h, sx, sy, tx, ty, climb);
+        if (p) cands.push(smoothPath(p, cost, w, climb));
+      }
+      const band = bandAround(first, w, h, R);
+      for (let i = 0; i < n; i++) tmp[i] = band[i] ? cost[i] * 3 : cost[i];
+      const p = findPath(tmp, w, h, sx, sy, tx, ty, climb);
+      if (p) cands.push(smoothPath(p, cost, w, climb));
+      cands.sort((a, b) => a.cost - b.cost);
+      const kept = [cands[0]], bands = [bandAround(cands[0].path, w, h, R)];
+      for (let k = 1; k < cands.length && kept.length < VARIANT_MAX; k++) {
+        const c = cands[k];
+        if (c.cost > cands[0].cost * VARIANT_SLOWER) break;
+        if (bands.some((m) => shareInside(c.path, m) > 0.5)) continue; // praktycznie ta sama droga
+        kept.push(c); bands.push(bandAround(c.path, w, h, R));
+      }
+      return kept;
     }
-    if (!total || inside / total > 0.5) return null; // to praktycznie ta sama trasa
-    const stats = pathStats(altPath, cost, w, climb);
-    if (stats.cost > best.cost * 1.5) return null; // za słaby, żeby go pokazywać
-    return Object.assign({ path: altPath }, stats);
+    return cands;
   }
 
   // Punkt stuknięty na przeszkodzie (np. róg budynku) przesuwamy na najbliższe przebieżne miejsce.
@@ -790,16 +879,10 @@
       }
     }
     const ax = a.x - x0, ay = a.y - y0, bx = b.x - x0, by = b.y - y0;
-    const path = findPath(c, ww, wh, ax, ay, bx, by, cl);
-    if (!path) return null;
-    const best = Object.assign({ path }, pathStats(path, c, ww, cl));
-    const alt = path.length > 20 ? findAlternative(c, ww, wh, best, ax, ay, bx, by, cl) : null;
-    if (!whole) {
-      const toGlobal = (pth) => pth.map((i) => (((i / ww) | 0) + y0) * w + (i % ww) + x0);
-      best.path = toGlobal(best.path);
-      if (alt) alt.path = toGlobal(alt.path);
-    }
-    return { best, alt };
+    const variants = findVariants(c, ww, wh, ax, ay, bx, by, cl);
+    if (!variants) return null;
+    if (!whole) for (const v of variants) v.path = v.path.map((i) => (((i / ww) | 0) + y0) * w + (i % ww) + x0);
+    return variants;
   }
 
   // Przebieg między dwoma punktami: najlepszy wariant, alternatywa i linia prosta.
@@ -809,14 +892,15 @@
   function routeLeg(cost, w, h, p, q, climb) {
     const straight = lineStats(cost, w, p.x, p.y, q.x, q.y, climb);
     const a = nearestPassable(cost, w, h, p), b = nearestPassable(cost, w, h, q);
-    if (!a || !b) return { best: null, alt: null, straight };
+    if (!a || !b) return { best: null, alt: null, variants: [], straight };
     const m = Math.round(Math.hypot(b.x - a.x, b.y - a.y)) + 150;
     const x0 = Math.max(0, Math.min(a.x, b.x) - m), y0 = Math.max(0, Math.min(a.y, b.y) - m);
     const x1 = Math.min(w, Math.max(a.x, b.x) + m + 1), y1 = Math.min(h, Math.max(a.y, b.y) + m + 1);
     const whole = x0 === 0 && y0 === 0 && x1 === w && y1 === h;
     let res = solveWindow(cost, w, h, a, b, climb, x0, y0, x1, y1);
     if (!res && !whole) res = solveWindow(cost, w, h, a, b, climb, 0, 0, w, h);
-    return { best: res ? res.best : null, alt: res ? res.alt : null, straight };
+    const variants = res || []; // od najszybszego; best i alt zostają dla wygody
+    return { best: variants[0] || null, alt: variants[1] || null, variants, straight };
   }
 
   // Dłuższy bok siatki, na której rozpoznawany jest teren i liczona trasa. Gęstsza siatka = dokładniejsze
