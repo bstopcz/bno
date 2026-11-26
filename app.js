@@ -123,7 +123,8 @@
   function showScale() {
     if (ocad) {
       $('scaleinfo').textContent = `Plik OCAD, zestaw symboli: ${ocad.grid.setName}, skala 1:${Math.round(ocad.grid.scale)}. `
-        + `Jedno pole siatki to ${ocad.grid.mpp.toFixed(2).replace('.', ',')} m, mapa obejmuje ok. ${Math.round(ocad.grid.mpp * W / 10) * 10} × ${Math.round(ocad.grid.mpp * H / 10) * 10} m.`;
+        + `Jedno pole siatki to ${ocad.grid.mpp.toFixed(2).replace('.', ',')} m, ${ocad.region ? 'wybrany obszar' : 'mapa'} obejmuje ok. ${Math.round(ocad.grid.mpp * W / 10) * 10} × ${Math.round(ocad.grid.mpp * H / 10) * 10} m.`
+        + (ocad.grid.mpp > 1 ? ' To za grubo na dokładne liczenie: kliknij „Wybierz obszar” i wskaż fragment mapy, po którym biegniesz.' : '');
       return;
     }
     $('scaleinfo').textContent = hasScale()
@@ -160,13 +161,14 @@
         photo = document.createElement('canvas'); classView = document.createElement('canvas');
         $('tools').hidden = false;
         for (const id of ['mode', 'scale', 'dpi']) $(id).closest('label').hidden = true; // przy OCAD-zie znamy to z pliku
+        $('ocadregion').hidden = false; $('ocadwhole').hidden = false;
         runBusy('Czytam plik OCAD…', () => {
           analyze();
           if (!ocad.map.tested) status('Uwaga: plik w wersji OCAD ' + ocad.map.version + ', której czytnik nie był testowany. Sprawdź wynik w „Pokaż co widzę”.');
         });
         return;
       }
-      ocad = null; $('ocadsyms').hidden = true;
+      ocad = null; $('ocadsyms').hidden = true; $('ocadregion').hidden = true; $('ocadwhole').hidden = true;
       for (const id of ['mode', 'scale', 'dpi']) $(id).closest('label').hidden = false;
       const opened = await BnoFile.open(file); // PDF jest tu zamieniany na obraz
       const dpi = opened.pdf ? opened.dpi : readDpi(await file.arrayBuffer());
@@ -201,13 +203,24 @@
   }
 
   // ---------- plik OCAD: teren prosto z symboli ----------
+  let regionPick = null; // lista wskazanych rogów podczas wybierania wycinka mapy
+  $('ocadregion').addEventListener('click', () => {
+    if (!ocad || busy) return;
+    regionPick = [];
+    status('Stuknij jeden róg obszaru, który ma być policzony dokładnie.');
+  });
+  $('ocadwhole').addEventListener('click', () => {
+    if (!ocad || busy || !ocad.region) return;
+    ocad.region = null; points = [];
+    runBusy('Przeliczam całą mapę…', analyze);
+  });
   const SYM = BnoSymbols;
   const overrideKey = (grid) => 'bno-sym:' + grid.set;
   const loadOverrides = (setId) => { try { return JSON.parse(localStorage.getItem('bno-sym:' + setId)) || {}; } catch (err) { return {}; } };
 
   function analyzeOcad() {
     const setId = SYM.detectSet(ocad.map);
-    const grid = SYM.build(ocad.map, MAX_DIM, loadOverrides(setId), setId);
+    const grid = SYM.build(ocad.map, MAX_DIM, loadOverrides(setId), setId, ocad.region);
     ocad.grid = grid;
     W = grid.w; H = grid.h;
     for (const c of [photo, classView, canvas]) { c.width = W; c.height = H; }
@@ -254,6 +267,18 @@
     const rect = canvas.getBoundingClientRect();
     const x = Math.min(W - 1, Math.max(0, Math.round((e.clientX - rect.left) * W / rect.width)));
     const y = Math.min(H - 1, Math.max(0, Math.round((e.clientY - rect.top) * H / rect.height)));
+    if (regionPick) { // wybór wycinka mapy z pliku OCAD: dwa przeciwległe rogi
+      regionPick.push({ x, y });
+      if (regionPick.length < 2) { status('Teraz stuknij przeciwległy róg obszaru.'); return; }
+      const g = ocad.grid, mm = (p) => ({ x: g.bounds.x0 + p.x / g.k, y: g.bounds.y1 - p.y / g.k });
+      const p1 = mm(regionPick[0]), p2 = mm(regionPick[1]);
+      regionPick = null;
+      if (Math.abs(p1.x - p2.x) < 5 || Math.abs(p1.y - p2.y) < 5) { status('Obszar jest za mały. Kliknij „Wybierz obszar” i wskaż dwa odległe rogi.'); return; }
+      ocad.region = { x0: Math.min(p1.x, p2.x), x1: Math.max(p1.x, p2.x), y0: Math.min(p1.y, p2.y), y1: Math.max(p1.y, p2.y) };
+      points = [];
+      runBusy('Przeliczam wybrany obszar…', analyze);
+      return;
+    }
     points.push({ x, y });
     draw();
     if (points.length < 2) { status('Teraz stuknij pierwszy punkt kontrolny.'); return; }

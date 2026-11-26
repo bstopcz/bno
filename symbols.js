@@ -87,13 +87,14 @@
     707: 'oobline', 708: 'crossing', 709: 'oob', 714: 'oob',
   };
   // Wyjątki po pełnym numerze (numer * 1000 + podnumer).
-  const SPRINT_SUB = { 512100: 'ignore', 512200: 'bridge', 512300: 'paved' }; // 512.1: krawędź mostu, pod którym wolno tylko przejść
-  const ISSOM_SUB = { 526200: 'canopy' };
+  // 512.1x: most i jego krawędź (wolno tylko przejść pod spodem) - na płaskiej siatce pomijamy; 512.2x: przejście pod spodem
+  const SPRINT_SUB = (num) => { const sub = num % 1000, main = (num / 1000) | 0; return main !== 512 ? null : sub >= 300 ? 'paved' : sub >= 200 ? 'bridge' : sub >= 100 ? 'ignore' : null; };
+  const ISSOM_SUB = (num) => (num >= 526200 && num < 526300 ? 'canopy' : null);
 
   const SETS = {
-    isom2017: { name: 'ISOM 2017 (las)', table: ISOM2017, sub: {} },
+    isom2017: { name: 'ISOM 2017 (las)', table: ISOM2017, sub: () => null },
     issprom2019: { name: 'ISSprOM 2019 (sprint)', table: ISSPROM2019, sub: SPRINT_SUB },
-    isom2000: { name: 'ISOM 2000 (las, dawna numeracja)', table: ISOM2000, sub: {} },
+    isom2000: { name: 'ISOM 2000 (las, dawna numeracja)', table: ISOM2000, sub: () => null },
     issom2007: { name: 'ISSOM 2007 (sprint, dawna numeracja)', table: ISSOM2007, sub: ISSOM_SUB },
   };
 
@@ -116,7 +117,7 @@
     const key = String(sym.num);
     if (overrides && overrides[key] && KIND[overrides[key]]) return overrides[key];
     const set = SETS[setId];
-    let k = set.sub[sym.num] || set.table[(sym.num / 1000) | 0] || 'ignore';
+    let k = set.sub(sym.num) || set.table[(sym.num / 1000) | 0] || 'ignore';
     if (typeof k === 'object') k = (sym.type === 3 ? k.area : sym.type === 2 ? k.line : null) || 'ignore';
     if (k === 'pavedline') k = sym.lineWidth >= 0.3 ? 'road' : 'ignore'; // gruba linia = droga, cienka = krawędź nawierzchni
     // pierwsze wydanie ISSprOM 2019 nazywało symbol 410 "Impassable vegetation"; od 2019-2 tę rolę ma 411
@@ -125,12 +126,14 @@
     // symbol o złym typie geometrii dla danego rodzaju (np. punktowy "budynek") nie jest nanoszony
     if (sym.type === 1 && mode !== 'gap') return 'ignore';
     if (sym.type === 3 && (mode === 'slowline' || mode === 'path' || mode === 'wall')) return 'ignore';
-    if (sym.type === 2 && (mode === 'area' || mode === 'overlay')) return 'ignore';
+    // linia z symbolu powierzchniowego: gruba (żywopłot, pas zieleni) jest nanoszona jako pas, cienka to tylko obwódka
+    if (sym.type === 2 && (mode === 'area' || mode === 'overlay') && !(sym.lineWidth >= 0.25)) return 'ignore';
     return k;
   }
 
   // Zamiana mapy z pliku OCAD na siatkę: { w, h, cls, contour, mpp (metry na pole), used (symbole z licznikami) }.
-  function build(map, gridDim, overrides, setId) {
+  // region (opcjonalnie): wycinek mapy { x0, y0, x1, y1 } w milimetrach OCAD-a; wtedy cała siatka idzie na ten wycinek.
+  function build(map, gridDim, overrides, setId, region) {
     setId = setId || detectSet(map);
     const used = new Map();
     const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
@@ -146,7 +149,21 @@
       }
     }
     if (!(b.x1 > b.x0) || !(b.y1 > b.y0)) throw new Error('Nie rozpoznałem w tym pliku żadnego symbolu terenu. Sprawdź tabelę symboli poniżej.');
-    const pad = 2; // mm marginesu
+    // Pojedyncze obiekty leżące daleko poza mapą (zabłąkane punkty, opisy, stare warstwy) nie mogą rozciągać siatki:
+    // zakres bierzemy z 0,5-99,5 percentyla wierzchołków rozpoznanych obiektów, z 5% zapasu.
+    if (region) { b.x0 = region.x0; b.x1 = region.x1; b.y0 = region.y0; b.y1 = region.y1; }
+    else {
+      const xs = [], ys = [];
+      for (const o of map.objects) {
+        if (used.get(o.sym).kind === 'ignore') continue;
+        for (const r of o.rings) { const step = Math.max(2, (r.length >> 5) << 1); for (let i = 0; i < r.length; i += step) { xs.push(r[i]); ys.push(r[i + 1]); } }
+      }
+      const pct = (arr, p) => { arr.sort((p1, p2) => p1 - p2); return arr[Math.min(arr.length - 1, Math.max(0, Math.round(p * (arr.length - 1))))]; };
+      const x0 = pct(xs, 0.005), x1 = pct(xs, 0.995), y0 = pct(ys, 0.005), y1 = pct(ys, 0.995);
+      const mx = (x1 - x0) * 0.05, my = (y1 - y0) * 0.05;
+      b.x0 = Math.max(b.x0, x0 - mx); b.x1 = Math.min(b.x1, x1 + mx); b.y0 = Math.max(b.y0, y0 - my); b.y1 = Math.min(b.y1, y1 + my);
+    }
+    const pad = region ? 0 : 2; // mm marginesu
     b.x0 -= pad; b.y0 -= pad; b.x1 += pad; b.y1 += pad;
     const scale = map.geo.scale || 10000;
     // pól na milimetr: tyle, żeby dłuższy bok miał gridDim pól, ale nie gęściej niż 0,25 m terenu na pole

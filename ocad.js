@@ -34,8 +34,10 @@
         }
         let lineWidth = 0;
         if (otp === LINE && inside(pos + lineOffset, 4)) {
-          const lw = i16(pos + lineOffset + 2);
-          if (lw > 0 && lw < 500) lineWidth = lw / 100; // mm
+          // grubość linii pojedynczej albo, dla symboli rysowanych podwójną linią (chodnik, droga), jej wypełnienia
+          const lw = i16(pos + lineOffset + 2), dbl = inside(pos + lineOffset + 36, 2) ? i16(pos + lineOffset + 36) : 0;
+          const best = Math.max(lw > 0 && lw < 1000 ? lw : 0, dbl > 0 && dbl < 1000 ? dbl : 0);
+          if (best > 0) lineWidth = best / 100; // mm
         }
         symbols.set(num, { num, type: otp, name, hidden: (status & 15) === 2, lineWidth });
       }

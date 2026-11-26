@@ -243,7 +243,7 @@ if (typeof document !== 'undefined') {
     ['isom2017', 301, 3, 'lake'], ['isom2017', 304, 2, 'stream'], ['isom2017', 307, 3, 'lake'], ['isom2017', 505, 2, 'footpath'], ['isom2017', 507, 2, 'faintpath'],
     ['isom2017', 516, 2, 'fence'], ['isom2017', 518, 2, 'wall'], ['isom2017', 519, 1, 'crossing'], ['isom2017', 520, 3, 'forbidden'], ['isom2017', 521, 3, 'building'],
     ['isom2017', 601, 2, 'ignore'], ['isom2017', 208, 3, 'ignore'], ['isom2017', 709, 3, 'oob'], ['isom2017', 532, 2, 'footpath'],
-    ['issprom2019', 411, 3, 'impveg'], ['issprom2019', 512.1, 2, 'ignore'], ['issprom2019', 512.2, 2, 'bridge'], ['issprom2019', 515, 2, 'wall'],
+    ['issprom2019', 411, 3, 'impveg'], ['issprom2019', 512.1, 2, 'ignore'], ['issprom2019', 512.101, 2, 'ignore'], ['issprom2019', 512.2, 2, 'bridge'], ['issprom2019', 515, 2, 'wall'],
     ['issprom2019', 513, 2, 'fence'], ['issprom2019', 522, 3, 'canopy'], ['issprom2019', 714, 3, 'oob'], ['issprom2019', 208, 3, 'stony'],
     ['isom2000', 519, 2, 'fence'], ['isom2000', 521, 2, 'wall'], ['isom2000', 524, 2, 'wall'], ['isom2000', 526, 3, 'building'], ['isom2000', 528, 3, 'forbidden'],
     ['isom2000', 506, 2, 'footpath'], ['isom2000', 305, 2, 'stream'], ['isom2000', 309, 3, 'lake'], ['isom2000', 415, 3, 'cult'], ['isom2000', 707, 2, 'oobline'],
@@ -255,6 +255,10 @@ if (typeof document !== 'undefined') {
   assert.strictEqual(k('issprom2019', 501.1, 2, 'edge', 0.1), 'ignore', 'krawędź nawierzchni');
   assert.strictEqual(k('issprom2019', 410, 3, 'Impassable vegetation'), 'impveg', '410 w pierwszym wydaniu ISSprOM 2019');
   assert.strictEqual(k('issprom2019', 410, 3, 'Vegetation: fight'), 'fight');
+  assert.strictEqual(k('issprom2019', 408.002, 2, 'hedge', 0.4), 'walk', 'żywopłot jako gruba linia');
+  assert.strictEqual(k('issprom2019', 406.001, 2, 'outline', 0.1), 'ignore', 'cienka obwódka zieleni');
+  const gr = BnoSymbols.build(map, 800, null, null, { x0: 100, y0: 10, x1: 200, y1: 70 });
+  assert.ok(Math.abs(gr.mpp - 10 * 100 / 800) < 0.01, 'wycinek mapy dostaje całą siatkę: ' + gr.mpp);
   print('OK tabele symboli:', expect.length + 4, 'sprawdzonych wpisów');
 }
 
