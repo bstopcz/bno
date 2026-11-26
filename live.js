@@ -155,15 +155,17 @@
       if (p && (p.x < 0 || p.y < 0 || p.x > W || p.y > H)) c += '. Jesteś poza mapą.';
     }
     if (fix && fix.acc > 100) c += ' Pozycja jest bardzo niedokładna – to wygląda na komputer bez GPS. Otwórz stronę na telefonie (instrukcja na dole).';
-    say(gps + ' · ' + c + (ocadCtx && ocadCtx.note ? ' ' + ocadCtx.note : ''));
+    say(gps + ' · ' + c + (ocadCtx && ocadCtx.note ? ' ' + ocadCtx.note : ocadNote ? ' ' + ocadNote : ''));
   }
 
   // ---------- mapa ----------
   $('lfile').addEventListener('change', (e) => {
     const files = [...e.target.files];
-    const ocd = files.find((f) => /\.ocd$/i.test(f.name)), other = files.find((f) => !/\.ocd$/i.test(f.name));
-    if (ocd && other) { openPair(ocd, other); return; } // plik OCAD + PDF tej samej mapy
-    const file = files[0];
+    const isWorld = (f) => /\.(jgw|jpgw|pgw|pngw|tfw|wld)$/i.test(f.name); // plik georeferencji obrazu ("world file")
+    const ocd = files.find((f) => /\.ocd$/i.test(f.name)), world = files.find(isWorld);
+    const other = files.find((f) => !/\.ocd$/i.test(f.name) && !isWorld(f));
+    if (other && (ocd || world)) { openPair(ocd, other, world); return; } // obraz/PDF + plik OCAD i/lub plik georeferencji
+    const file = other || files[0];
     if (!file) return;
     if (/\.ocd$/i.test(file.name)) {
       say('Do pliku OCAD dołącz PDF tej samej mapy: w oknie wyboru zaznacz oba pliki naraz (z klawiszem Ctrl). Sam plik OCAD obejrzysz w zakładce „Warianty”.');
@@ -183,15 +185,33 @@
   // ---------- para: plik OCAD + PDF tej samej mapy ----------
   // Wyświetlamy PDF, a teren, skalę i położenie na świecie bierzemy z OCAD-a. PDF jest dopasowywany automatycznie.
   let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
-  async function openPair(ocdFile, imgFile) {
+  async function openPair(ocdFile, imgFile, worldFile) {
     try {
-      say('Czytam plik OCAD…');
-      const map = BnoOcad.parse(await ocdFile.arrayBuffer());
-      say('Zamieniam PDF na obraz…');
+      let map = null, world = null;
+      if (ocdFile) { say('Czytam plik OCAD…'); map = BnoOcad.parse(await ocdFile.arrayBuffer()); }
+      if (worldFile) {
+        // sześć liczb: rozmiar piksela w X, obrót, obrót, rozmiar piksela w Y (ujemny), współrzędne środka lewego górnego piksela
+        const v = (await worldFile.text()).trim().split(/\s+/).map((t) => parseFloat(t.replace(',', '.')));
+        if (v.length >= 6 && v.every(isFinite) && v[0] > 0) world = { a: v[0], d: v[1], b: v[2], e: v[3], c: v[4], f: v[5] };
+      }
+      say(/\.pdf$/i.test(imgFile.name) ? 'Zamieniam PDF na obraz…' : 'Wczytuję mapę…');
       const f = await BnoFile.open(imgFile);
-      loadMap(f.url, { key: 'bno-pair:' + imgFile.name + ':' + imgFile.size, name: f.name, image: f.pdf ? f.url : null, ocad: { map, dpi: f.dpi } });
+      loadMap(f.url, { key: 'bno-pair:' + imgFile.name + ':' + imgFile.size, name: f.name, image: f.pdf ? f.url : null,
+        ocad: map ? { map, dpi: f.dpi, world } : null, world: map ? null : world });
     } catch (err) { say(err.message); }
   }
+
+  // Kalibracja z samego pliku georeferencji obrazu (bez pliku OCAD).
+  function attachWorld(wf) {
+    const crs = BnoAlign.detectCrs({ x: wf.c, y: wf.f, realWorld: true, grid: 0 });
+    if (!crs) { say('Plik georeferencji ma współrzędne w układzie, którego nie rozpoznaję – skalibruj mapę ręcznie.'); return; }
+    pairs = [[0, 0], [W, 0], [0, H], [W, H]].map(([px, py]) => Object.assign(BnoAlign.tmInverse(wf.c + wf.a * px + wf.b * py, wf.f + wf.d * px + wf.e * py, crs), { px, py }));
+    cal = fit(pairs); locked = true;
+    $('lcaladd').hidden = true; $('lcalclear').hidden = true;
+    ocadNote = `Kalibracja automatyczna z pliku georeferencji obrazu (${crs.name}).`;
+    refresh();
+  }
+  let ocadNote = '';
 
   const T = BnoCore.T;
   const CAT = new Uint8Array(64); // klasa terenu -> kategoria do porównywania obrazu z mapą
@@ -210,9 +230,13 @@
     const seen = analyze(g.getImageData(0, 0, aw, ah).data, aw, ah, sprint ? 'sprint' : 'forest');
     const dpi = o.dpi || 300; // obraz bez zapisanej rozdzielczości: zakładamy 300 dpi, skalę wydruku i tak sprawdzamy
     const P = { cat: cats(seen.cls), w: aw, h: ah, mm: 25.4 / dpi / ak };
+    const wf = o.world, perMm = map.geo.scale / 1000; // metry terenu na milimetr mapy
+    const exact = wf && Math.abs(map.geo.angle) < 0.01 && Math.abs(wf.b) < 1e-9 && Math.abs(wf.d) < 1e-9; // obraz ma własną georeferencję
     // 2. zgrubne położenie obrazu na całej mapie OCAD
     const over = BnoSymbols.build(map, 2400, symOverrides(setId), setId);
-    const a1 = BnoAlign.align(P, { cat: cats(over.cls), w: over.w, h: over.h, mm: 1 / over.k });
+    const a1 = exact
+      ? { scale: wf.a / perMm / (25.4 / dpi), x: (wf.c - wf.a / 2 - map.geo.x) / perMm - over.bounds.x0, y: over.bounds.y1 - (wf.f - wf.e / 2 - map.geo.y) / perMm, score: 1 }
+      : BnoAlign.align(P, { cat: cats(over.cls), w: over.w, h: over.h, mm: 1 / over.k });
     if (!a1) throw new Error('Obraz jest większy niż mapa w pliku OCAD – to chyba nie ta sama mapa.');
     const mmImg = 25.4 / dpi * a1.scale; // ile mm mapy OCAD ma jeden piksel obrazu
     let left = over.bounds.x0 + a1.x, top = over.bounds.y1 - a1.y;
@@ -220,16 +244,19 @@
     const m = 4; // mm zapasu
     const fine = BnoSymbols.build(map, PROC_DIM, symOverrides(setId), setId, { x0: left - m, x1: left + W * mmImg + m, y0: top - H * mmImg - m, y1: top + m });
     const a2 = BnoAlign.align(P, { cat: cats(fine.cls), w: fine.w, h: fine.h, mm: 1 / fine.k }, [a1.scale]);
-    if (a2 && a2.score >= a1.score - 0.05) { left = fine.bounds.x0 + a2.x; top = fine.bounds.y1 - a2.y; }
-    const score = a2 ? Math.max(a1.score, a2.score) : a1.score;
+    if (!exact && a2 && a2.score >= a1.score - 0.05) { left = fine.bounds.x0 + a2.x; top = fine.bounds.y1 - a2.y; }
+    const score = exact ? (a2 ? a2.score : 0) : a2 ? Math.max(a1.score, a2.score) : a1.score;
     ocadCtx = { map, setId, region: { x0: left, x1: left + W * mmImg, y0: top - H * mmImg, y1: top } };
     proc = null;
     ensureProc();
     // 4. położenie na świecie z georeferencji pliku
     const crs = BnoAlign.detectCrs(map.geo);
-    let note = `Mapa z pliku OCAD (${BnoSymbols.SETS[setId].name}, 1:${Math.round(map.geo.scale)}), PDF dopasowany: zgodność ${Math.round(Math.max(0, score) * 100)}%`;
-    if (Math.abs(a1.scale - 1) > 0.01) note += `, wydruk w skali 1:${Math.round(map.geo.scale / a1.scale)}`;
-    if (score < 0.35) note += '. UWAGA: słabe dopasowanie – sprawdź, czy PDF pochodzi z tego pliku';
+    let note = `Mapa z pliku OCAD (${BnoSymbols.SETS[setId].name}, 1:${Math.round(map.geo.scale)}), `
+      + (exact ? 'obraz osadzony według swojego pliku georeferencji' : 'obraz dopasowany automatycznie')
+      + `: zgodność terenu ${Math.round(Math.max(0, score) * 100)}%`;
+    if (o.dpi && Math.abs(a1.scale - 1) > 0.01) note += `, wydruk w skali 1:${Math.round(map.geo.scale / a1.scale)}`;
+    if (!o.dpi) note += `, obraz ok. ${Math.round(300 / a1.scale)} dpi`;
+    if (score < 0.35) note += '. UWAGA: słaba zgodność – sprawdź, czy obraz pochodzi z tego pliku OCAD';
     if (crs) {
       pairs = [[0, 0], [W, 0], [0, H], [W, H]].map(([px, py]) => Object.assign(BnoAlign.ocadToLatLon(map.geo, crs, left + px * mmImg, top - py * mmImg), { px, py }));
       cal = fit(pairs); locked = true;
@@ -250,7 +277,7 @@
       svg.setAttribute('width', W); svg.setAttribute('height', H);
       mapKey = opts.key; mapName = opts.name; locked = !!opts.preset;
       mapImage = opts.image || null;
-      ocadCtx = null;
+      ocadCtx = null; ocadNote = '';
       pairs = [];
       if (locked) pairs = opts.preset.map((p) => ({ lat: +p.lat, lon: +p.lon, px: +p.px, py: +p.py }));
       else try { pairs = JSON.parse(localStorage.getItem(mapKey)) || []; } catch (err) { /* brak pamięci – trudno */ }
@@ -262,8 +289,9 @@
       $('ltitle').textContent = opts.title || '';
       setTapMode(null);
       fitView(); describe(); guide();
+      if (opts.world) attachWorld(opts.world);
       if (opts.ocad) {
-        say('Dopasowuję PDF do mapy z pliku OCAD… (to może potrwać kilkanaście sekund)');
+        say('Dopasowuję obraz do mapy z pliku OCAD… (to może potrwać kilkanaście sekund)');
         setTimeout(() => { try { attachOcad(opts.ocad); } catch (err) { say('Nie udało się połączyć PDF-a z plikiem OCAD: ' + err.message); } }, 80);
       }
     };

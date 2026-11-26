@@ -204,7 +204,7 @@
 
 <main id="tab-live">
   <label class="pick">Wczytaj własną mapę (PDF / JPG / PNG, najlepiej razem z plikiem OCAD)
-    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd" multiple>
+    <input id="lfile" type="file" accept="image/*,application/pdf,.pdf,.ocd,.jgw,.jpgw,.pgw,.pngw,.tfw,.wld" multiple>
   </label>
   <div id="ltitle"></div>
   <div id="lstatus" class="status"></div>
@@ -260,7 +260,8 @@
       <li>Wczytaj mapę: obraz JPG/PNG albo PDF (z PDF-a brana jest pierwsza strona i zamieniana na ostry obraz).
           Im lepsza jakość (eksport z OCAD), tym lepiej.</li>
       <li><b>Najdokładniej:</b> zaznacz naraz plik OCAD i PDF tej samej mapy. Apka pokaże PDF, a teren, skalę i położenie
-          weźmie z pliku OCAD: nie trzeba wtedy kalibrować ani wybierać rodzaju mapy.</li>
+          weźmie z pliku OCAD: nie trzeba wtedy kalibrować ani wybierać rodzaju mapy. Jeśli eksportujesz z OCAD-a obraz
+          z plikiem georeferencji (np. JPG + JGW), zaznacz też ten plik: obraz zostanie osadzony co do piksela.</li>
       <li>Bez pliku OCAD: dodaj 2 punkty kalibracji, najlepiej w przeciwnych rogach mapy. Dla każdego stuknij miejsce na mapie
           i albo stań tam z włączonym GPS, albo wklej współrzędne skopiowane z Map Google
           (przytrzymaj palec na tym miejscu i skopiuj liczby).</li>
