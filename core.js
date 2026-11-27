@@ -771,7 +771,8 @@
       pre[k] = pre[k - 1] + c;
     }
     const seg = (a, b, cells) => segStats(cost, w, path[a] % w, (path[a] / w) | 0, path[b] % w, (path[b] / w) | 0, climb, cells);
-    const out = { path: [path[0]], cost: 0, length: 0, crossings: 0, easy: 0 };
+    // path: pola po kolei (do rysowania), line: same wierzchołki łamanej (dokładny kształt i długość)
+    const out = { path: [path[0]], line: [path[0]], cost: 0, length: 0, crossings: 0, easy: 0 };
     let a = 0;
     while (a < n - 1) {
       let b = a + 1, j = a + 2;
@@ -785,6 +786,7 @@
       const s = seg(a, b, out.path);
       if (s) { out.cost += s.cost; out.length += s.length; out.crossings += s.crossings; out.easy += s.easy; }
       else { out.path.push(path[b]); out.cost += pre[b] - pre[a]; out.length += 1; } // nie powinno się zdarzyć
+      out.line.push(path[b]);
       a = b;
     }
     out.easy = out.length ? out.easy / out.length : 0;
@@ -881,7 +883,8 @@
     const ax = a.x - x0, ay = a.y - y0, bx = b.x - x0, by = b.y - y0;
     const variants = findVariants(c, ww, wh, ax, ay, bx, by, cl);
     if (!variants) return null;
-    if (!whole) for (const v of variants) v.path = v.path.map((i) => (((i / ww) | 0) + y0) * w + (i % ww) + x0);
+    const toGlobal = (i) => (((i / ww) | 0) + y0) * w + (i % ww) + x0;
+    if (!whole) for (const v of variants) { v.path = v.path.map(toGlobal); v.line = v.line.map(toGlobal); }
     return variants;
   }
 

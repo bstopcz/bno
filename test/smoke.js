@@ -381,3 +381,27 @@ print('1600x1200 routeLeg ms:', Date.now() - t1);
   S.deleteRun(1); S.resetPace();
   print('OK własne tempo i kopia zapasowa');
 }
+
+// --- opis wariantu słowami ---
+{
+  const Opis = typeof require !== 'undefined' ? require('../opis.js') : BnoOpis;
+  const OW = 400, OH = 200, oc = new Uint8Array(OW * OH).fill(T.FOREST);
+  for (let y = 0; y < OH; y++) for (let x = 0; x < 150; x++) if (Math.abs(y - 100) < 3) oc[y * OW + x] = T.PATH2; // ścieżka od zachodu do x=150
+  for (let y = 0; y < OH; y++) for (let x = 200; x < 204; x++) oc[y * OW + x] = T.STREAM;                          // strumień w poprzek
+  for (let y = 0; y < OH; y++) for (let x = 380; x < 386; x++) oc[y * OW + x] = T.PATH;                             // droga za punktem
+  const res = Opis.describe({ pts: [{ x: 10, y: 100 }, { x: 150, y: 100 }, { x: 330, y: 100 }], cls: oc, w: OW, h: OH, k: 1, pxPerM: 1,
+    objects: [{ kind: 'boulder', x: 250, y: 108 }, { kind: 'boulder', x: 258, y: 109 }, { kind: 'knoll', x: 300, y: 92 }, { kind: 'tree', x: 60, y: 104 }],
+    forest: true, ocad: true });
+  const txt = res.steps.map((q) => q.text);
+  assert.ok(/^Ścieżką 140 m na wschód/.test(txt[0]), txt[0]);
+  assert.ok(txt.some((q) => /^Zejdź ze ścieżki w las/.test(q)), 'zejście ze ścieżki: ' + txt.join(' | '));
+  assert.ok(txt.includes('Przetnij strumień.'), 'strumień: ' + txt.join(' | '));
+  assert.ok(txt.includes('Po prawej mijasz dwa kamienie.'), 'kamienie: ' + txt.join(' | '));
+  assert.ok(!txt.some((q) => /drzewo/.test(q)), 'na ścieżce obiektów nie wymieniamy');
+  assert.ok(txt.some((q) => /^Punkt ataku: górka po lewej\. Stąd 30 m na wschód/.test(q)), 'punkt ataku: ' + txt.join(' | '));
+  assert.ok(txt.some((q) => /Jeśli przebiegniesz punkt: po ok\. 50 m jest droga/.test(q)), 'linia zatrzymująca: ' + txt.join(' | '));
+  assert.strictEqual(res.marks.filter((m) => m.attack).length, 1);
+  const sprint = Opis.describe({ pts: [{ x: 10, y: 100 }, { x: 150, y: 100 }, { x: 330, y: 100 }], cls: oc, w: OW, h: OH, k: 1, pxPerM: 1, objects: [{ kind: 'boulder', x: 250, y: 108 }], forest: false });
+  assert.ok(!sprint.steps.some((q) => /Punkt ataku|mijasz/.test(q.text)), 'w sprincie bez obiektów i punktu ataku');
+  print('OK opis wariantu: ' + txt.length + ' kroków');
+}

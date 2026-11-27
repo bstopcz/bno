@@ -3,7 +3,7 @@
 // Obrazy map, siatki terenu i czcionki: od razu kopia, a w tle odświeżenie.
 const CACHE = 'bno-v1';
 const SHELL = ['./', 'index.html', 'logo.jpg', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest',
-  'geo.js', 'mapfile.js', 'align.js', 'lines.js', 'core.js', 'store.js', 'ocad.js', 'symbols.js', 'course.js',
+  'geo.js', 'mapfile.js', 'align.js', 'lines.js', 'core.js', 'store.js', 'ocad.js', 'symbols.js', 'course.js', 'opis.js',
   'info.js', 'live.js', 'treningi.js', 'gen.js', 'app.js', 'treningi/treningi.json'];
 
 self.addEventListener('install', (e) => {

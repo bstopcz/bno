@@ -20,7 +20,7 @@
   const ALT_COLORS = ['#1565c0', '#ef6c00'];
   const stage = $('lstage'), world = $('lworld'), img = $('limg'), svg = $('lsvg'), video = $('lvideo');
   const el = {};
-  for (const [name, tag] of [['course', 'g'], ['track', 'polyline'], ['alt', 'polyline'], ['alt2', 'polyline'], ['route', 'polyline'], ['cals', 'g'], ['target', 'circle'],
+  for (const [name, tag] of [['course', 'g'], ['track', 'polyline'], ['alt', 'polyline'], ['alt2', 'polyline'], ['route', 'polyline'], ['feat', 'g'], ['cals', 'g'], ['target', 'circle'],
     ['draw', 'polyline'], ['acc', 'circle'], ['head', 'polygon'], ['dot', 'circle'], ['pend', 'circle']]) {
     el[name] = document.createElementNS(SVG, tag);
     el[name].setAttribute('class', 'l-' + name);
@@ -141,6 +141,15 @@
       line.setAttribute('stroke-dasharray', `${9 * u} ${7 * u}`);
     });
 
+    // obiekty wymienione w opisie wariantu: kółka, punkt ataku grubszy
+    el.feat.replaceChildren();
+    for (const m of desc.marks) {
+      const c = document.createElementNS(SVG, 'circle');
+      c.setAttribute('cx', m.x); c.setAttribute('cy', m.y); c.setAttribute('r', (m.attack ? 13 : 9) * u);
+      c.setAttribute('fill', 'none'); c.setAttribute('stroke', m.attack ? '#e53935' : '#ef6c00'); c.setAttribute('stroke-width', (m.attack ? 3.5 : 2.5) * u);
+      el.feat.append(c);
+    }
+
     drawCourse(u);
     const pos = hidden() ? null : position();
     for (const k of ['dot', 'acc', 'head']) el[k].style.display = pos ? '' : 'none';
@@ -166,6 +175,7 @@
     updateRot();
     if (follow && pos && W && !hidden()) centerOn(pos);
     maybeReroute();
+    renderDesc();
     applyView();
     describe();
     renderVariants();
@@ -208,6 +218,9 @@
   // Wyświetlamy PDF, a teren, skalę i położenie na świecie bierzemy z OCAD-a. PDF jest dopasowywany automatycznie.
   let ocadCtx = null; // { map, region (wycinek mapy OCAD pokrywający obraz, w mm), note }
   let gridCtx = null; // gotowa siatka terenu treningu: { w, h, cls, contour }
+  let objects = [];   // obiekty punktowe mapy (kamienie, górki, wykroty...) w pikselach obrazu: [{ kind, x, y }]
+  let gridOcad = false; // siatka treningu pochodzi z pliku OCAD (rozróżnia drogi i ścieżki)
+  let desc = { steps: [], marks: [] }, descFor = null; // opis wybranego wariantu słowami
   // Trasa treningu: punkty w kolejności biegu (piksele obrazu) i numer punktu, do którego teraz biegniesz.
   let course = null, courseAt = -1;
   let courses = [];        // trasy treningu: [{ name, points: [{ x, y, type, code }] }] w pikselach obrazu
@@ -399,6 +412,8 @@
     const score = exact ? (a2 ? a2.score : 0) : a2 ? Math.max(a1.score, a2.score) : a1.score;
     mapScale = map.geo.scale;
     ocadCtx = { map, setId, region: { x0: left, x1: left + W * mmImg, y0: top - H * mmImg, y1: top } };
+    objects = BnoSymbols.points(map, setId).map((q) => ({ kind: q.kind, x: (q.x - left) / mmImg, y: (top - q.y) / mmImg }))
+      .filter((q) => q.x >= 0 && q.y >= 0 && q.x < W && q.y < H);
     proc = null;
     ensureProc();
     // 4. położenie na świecie z georeferencji pliku
@@ -416,6 +431,7 @@
       note += `. Kalibracja automatyczna z georeferencji (${crs.name})`;
       if (Math.abs(map.geo.angle) > 0.01) note += `; mapa obrócona o ${map.geo.angle.toFixed(1)}° – ten przypadek nie był sprawdzony w terenie`;
     } else note += '. Plik nie ma georeferencji w znanym układzie – skalibruj mapę ręcznie dwoma punktami';
+    note += objects.length ? `. Obiekty punktowe do opisu wariantów: ${objects.length}` : '. W pliku nie znalazłem obiektów punktowych (kamienie, górki itp.) – opis wariantów będzie bez nich';
     note += resolveCourses(left, top, mmImg);
     ocadCtx.note = note + '.';
     refresh();
@@ -432,6 +448,8 @@
       mapImage = opts.image || null; mapScale = +opts.scale || 0;
       reveal = false; shownRun = null; $('lresult').hidden = true;
       ocadCtx = null; ocadNote = ''; gridCtx = null; $('lmode').hidden = false;
+      gridOcad = !!opts.ocad; descFor = null;
+      objects = (opts.objects || []).map((q) => ({ kind: q[0], x: +q[1], y: +q[2] }));
       if (opts.grid) loadGrid(opts.grid);
       setCourses(opts.courses || []);
       pairs = [];
@@ -475,7 +493,7 @@
     state: () => ({ loaded: !!W, calibrated: !!cal, ocad: !!ocadCtx, name: mapName, courses: courses.map((c) => c.name) }),
     openTraining(t) {
       say('Pobieram mapę treningu…');
-      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka, scale: t.skala,
+      loadMap(t.plik, { key: 'trening:' + t.id, name: t.plik, title: t.nazwa, preset: t.kalibracja, mode: t.rodzaj, contour: t.ciecie, grid: t.siatka, scale: t.skala, objects: t.obiekty, ocad: t.zrodlo === 'OCAD',
         courses: Array.isArray(t.trasy) ? t.trasy.map((c) => ({ name: c.nazwa, points: (c.punkty || []).map((p) => ({ x: +p.px, y: +p.py, type: p.typ, code: p.kod })) })) : [] });
     },
   };
@@ -530,6 +548,7 @@
       ciecie: meta.ciecie != null ? meta.ciecie : parseFloat($('lcontour').value),
       zrodlo: ocadCtx ? 'OCAD' : 'obraz',
       trasy: courses.length ? courses.map((c) => ({ nazwa: c.name, punkty: c.points.map((p) => ({ px: r(p.x * es, 10), py: r(p.y * es, 10), typ: p.type, kod: p.code })) })) : undefined,
+      obiekty: objects.length ? objects.map((q) => [q.kind, Math.round(q.x * es), Math.round(q.y * es)]) : undefined,
       kalibracja: pairs.map((q) => ({ lat: r(q.lat, 1e7), lon: r(q.lon, 1e7), px: r(q.px * es, 100), py: r(q.py * es, 100) })),
     };
     return { files, entry };
@@ -714,9 +733,15 @@
   }
 
   function toRoute(part) {
+    // wariant to łamana z prostych odcinków; zagęszczamy ją (do ok. 1500 punktów), żeby prowadzenie miało gęste punkty
     const pts = [];
-    const path = part.path, step = Math.max(1, Math.round(path.length / 1500));
-    for (let i = 0; i < path.length; i += step) pts.push({ x: (path[i] % proc.w + 0.5) / proc.k, y: (((path[i] / proc.w) | 0) + 0.5) / proc.k });
+    const cell = (i) => ({ x: (i % proc.w + 0.5) / proc.k, y: (((i / proc.w) | 0) + 0.5) / proc.k });
+    const line = part.line, gap = Math.max(1, part.length / 1500) / proc.k;
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = cell(line[i]), b = cell(line[i + 1]), n = Math.max(1, Math.round(Math.hypot(b.x - a.x, b.y - a.y) / gap));
+      for (let q = 0; q < n; q++) pts.push({ x: a.x + (b.x - a.x) * q / n, y: a.y + (b.y - a.y) * q / n });
+    }
+    pts.push(cell(line[line.length - 1]));
     pts.push({ x: target.x, y: target.y });
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
@@ -726,7 +751,26 @@
   // Przyciski wyboru wariantu (A = najszybszy, B i C = inne drogi, nie więcej niż 30% wolniejsze).
   // Kolor paska na przycisku = kolor linii na mapie: wybrany czerwony, pozostałe niebieski i pomarańczowy.
   let variantsKey = '';
+  // Opis wybranego wariantu krokami (opis.js) – liczony raz na wariant.
+  function renderDesc() {
+    if (descFor === route) return;
+    descFor = route;
+    const box = $('ldesc');
+    desc = { steps: [], marks: [] };
+    if (route && cal && proc) {
+      try {
+        const nv = headingVector(cal, 0), nl = Math.hypot(nv.x, nv.y) || 1;
+        desc = BnoOpis.describe({ pts: route.pts, cls: proc.cls, w: proc.w, h: proc.h, k: proc.k, pxPerM: cal.pxPerM, north: { x: nv.x / nl, y: nv.y / nl },
+          objects, forest: ocadCtx ? ocadCtx.map.geo.scale > 5000 : $('lmode').value === 'forest', ocad: !!ocadCtx || gridOcad });
+      } catch (err) { desc = { steps: [], marks: [] }; }
+    }
+    box.hidden = !desc.steps.length;
+    const list = $('ldesclist');
+    list.replaceChildren();
+    for (const st of desc.steps) { const li = document.createElement('li'); li.textContent = st.text; if (st.attack) li.className = 'attack'; list.append(li); }
+  }
   function renderVariants() {
+    renderDesc();
     const len = (r) => (cal ? Math.round(r.cum[r.cum.length - 1] / cal.pxPerM / 10) * 10 : null);
     const key = routes.map((r) => len(r) + ':' + (r === route) + ':' + !!r.custom + ':' + r.crossings).join('|');
     if (key === variantsKey) return;

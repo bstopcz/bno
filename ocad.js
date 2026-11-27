@@ -81,7 +81,7 @@
         if (status !== 1 || view !== 0 || sym <= 0 || (type !== POINT && type !== LINE && type !== AREA)) { skipped++; continue; }
         const n = u32(pos + nItemOffset);
         if (!n || n > 2000000 || !inside(pos + headerSize, n * 8)) { skipped++; continue; }
-        const rings = readPoly(d, pos + headerSize, n, type === AREA);
+        const rings = readPoly(d, pos + headerSize, n, type === AREA, type === POINT);
         for (const r of rings) for (let i = 0; i < r.length; i += 2) {
           if (r[i] < bounds.x0) bounds.x0 = r[i]; if (r[i] > bounds.x1) bounds.x1 = r[i];
           if (r[i + 1] < bounds.y0) bounds.y0 = r[i + 1]; if (r[i + 1] > bounds.y1) bounds.y1 = r[i + 1];
@@ -96,10 +96,11 @@
   // Współrzędne obiektu: liczby 32-bitowe, górne 24 bity to pozycja w 0,01 mm, dolne 8 to flagi.
   // Zwraca listę pierścieni/odcinków jako płaskie tablice [x, y, x, y, ...] w milimetrach; krzywe Béziera
   // są zamieniane na łamane. Dla powierzchni kolejne pierścienie to dziury.
-  function readPoly(d, off, n, area) {
+  // Obiekt punktowy ma jedną parę współrzędnych (reszta, jeśli jest, to kierunek obrotu symbolu).
+  function readPoly(d, off, n, area, point) {
     const rings = [];
     let cur = [], px = 0, py = 0, ctrl = [];
-    const flush = () => { if (cur.length >= 4) rings.push(cur); cur = []; };
+    const flush = () => { if (cur.length >= (point ? 2 : 4)) rings.push(cur); cur = []; };
     for (let i = 0; i < n; i++) {
       const rx = d.getInt32(off + 8 * i, true), ry = d.getInt32(off + 8 * i + 4, true);
       const x = (rx >> 8) / 100, y = (ry >> 8) / 100, fx = rx & 255, fy = ry & 255;

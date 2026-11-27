@@ -76,6 +76,11 @@
   #lguide:empty { display: none; }
   #lrun { align-items: center; }
   #lruntext { font: 700 24px/1 var(--display); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; margin-right: 6px; }
+  #ldesc { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  #ldesc summary { cursor: pointer; font-weight: 600; }
+  #ldesc ol { margin: 8px 0; padding-left: 22px; }
+  #ldesc li { margin: 4px 0; }
+  #ldesc li.attack { font-weight: 600; }
   #lresult { margin: 0 0 12px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
   #lresult h3 { margin: 0 0 10px; font: 700 22px/1.15 var(--display); letter-spacing: 0.03em; }
   #lresult .tablewrap { margin-bottom: 10px; }
@@ -261,6 +266,8 @@
   <div id="lrun" class="tools" hidden><span id="lruntext"></span><button id="lrunstop">Zakończ bieg</button></div>
   <div id="lresult" hidden></div>
   <div id="lvariants" class="tools" hidden></div>
+  <details id="ldesc" hidden><summary>Opis wariantu krok po kroku</summary><ol id="ldesclist"></ol>
+    <p class="note">Kierunki są przybliżone (względem północy mapy). Obiekty z opisu są zakreślone na mapie pomarańczowo, punkt ataku czerwono.</p></details>
   <div id="lpanel" hidden>
     <p id="lhint"></p>
     <div id="lcalpick" hidden>
@@ -314,6 +321,9 @@
           (A = najszybszy). Każdy pokazuje długość, udział łatwego terenu (drogi, ścieżki, otwarte) i o ile jest wolniejszy.
           Wybrany jest czerwony, pozostałe przerywane: niebieski i pomarańczowy – tak jak pasek na przycisku.
           Strzałka prowadzi po wybranym.</li>
+      <li>Pod wariantami jest „Opis wariantu krok po kroku”: po czym biegniesz i ile metrów, gdzie skręcasz, co przecinasz.
+          Na mapie leśnej z pliku OCAD dochodzą mijane obiekty (kamienie, górki, wykroty…), punkt ataku i to, co jest za punktem,
+          gdybyś go przebiegł. Przeczytaj go przed startem na punkt – w biegu prowadzi strzałka.</li>
       <li>„Kamera”: trzymaj telefon pionowo przed sobą. W rogu masz minimapę z Twoją pozycją, obróconą zgodnie z kierunkiem patrzenia. Strzałka pokazuje kierunek trasy w miejscu, w którym jesteś
           (a gdy odejdziesz od niej o ponad 15 m, prowadzi z powrotem na linię, omijając teren nie do przejścia),
           a fioletowe kółko pojawia się w kadrze tam, gdzie leży punkt docelowy. Przycisk „Pełny ekran” w rogu
@@ -612,7 +622,9 @@
     <h2>Krok 5. Przekaż do publikacji</h2>
     <ol>
       <li>Pobierz plik <b>ZIP</b>. Jest w nim wszystko, czego potrzeba: obraz mapy (<code>.jpg</code>), siatka terenu
-          (<code>.siatka.png</code>) i wpis treningu (<code>.json</code>) z nazwą, opisem, dojazdem, kalibracją i trasami.</li>
+          (<code>.siatka.png</code>) i wpis treningu (<code>.json</code>) z nazwą, opisem, dojazdem, kalibracją i trasami.
+          Wpis zawiera też listę obiektów punktowych z mapy (rodzaj i położenie kamieni, górek, wykrotów itp.) –
+          z niej apka układa opis wariantu. Te pozycje będą publiczne razem z treningiem.</li>
       <li>Przekaż ten jeden plik osobie, która publikuje stronę (albo zapisz go w folderze <code>treningi/mapytrening</code> projektu).
           Ona rozpakowuje go do folderu <code>treningi</code> i dopisuje wpis do <code>treningi/treningi.json</code>.</li>
       <li>Po opublikowaniu trening pojawi się w zakładce „Treningi”. Uczestnik dostaje gotowy obraz, teren i kalibrację –
@@ -655,6 +667,7 @@
 <script src="ocad.js"></script>
 <script src="symbols.js"></script>
 <script src="course.js"></script>
+<script src="opis.js"></script>
 <script src="info.js"></script>
 <script src="live.js"></script>
 <script src="treningi.js"></script>

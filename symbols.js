@@ -243,6 +243,36 @@
     return { w, h, cls, contour, mpp, scale, set: setId, setName: SETS[setId].name, used: [...used.values()].sort((p, q) => p.sym.num - q.sym.num), bounds: b, k };
   }
 
+  // ---- obiekty punktowe (punkty orientacyjne do opisu wariantu) ----
+  // Numer główny symbolu -> rodzaj obiektu z opis.js. Tabele dawnej numeracji (ISOM 2000 / ISSOM 2007) są spisane
+  // z pamięci specyfikacji i nie były sprawdzone na prawdziwym pliku.
+  const POINTS_NEW = { 109: 'knoll', 110: 'knoll', 111: 'depression', 112: 'pit', 115: 'landform', 203: 'cave', 204: 'boulder', 205: 'bigboulder',
+    207: 'cluster', 311: 'well', 312: 'spring', 313: 'waterfeat', 417: 'tree', 418: 'bush', 419: 'vegfeat', 524: 'tower', 525: 'stand',
+    526: 'cairn', 527: 'rack', 530: 'manmade', 531: 'manmade' };
+  const POINTS_OLD = { 112: 'knoll', 113: 'knoll', 115: 'depression', 116: 'pit', 118: 'landform', 204: 'cave', 205: 'cave', 206: 'boulder',
+    207: 'bigboulder', 209: 'cluster', 312: 'waterhole', 313: 'well', 314: 'spring', 315: 'waterfeat', 418: 'vegfeat', 419: 'vegfeat',
+    420: 'vegfeat', 535: 'tower', 536: 'stand', 537: 'cairn', 538: 'rack', 539: 'manmade', 540: 'manmade' };
+  const POINTS = { isom2017: POINTS_NEW, issprom2019: POINTS_NEW, isom2000: POINTS_OLD, issom2007: Object.assign({}, POINTS_OLD, { 418: 'tree', 419: 'bush' }) };
+  // Nazwa symbolu wpisana przez kartografa mówi więcej niż numer (zielony x to w jednym klubie wykrot, w innym pień).
+  const POINT_NAMES = [[/wykrot|karp|root ?stock/i, 'rootstock'], [/mrowisk|ant ?hill/i, 'anthill'], [/ambon/i, 'stand'],
+    [/pa[sś]nik|fodder|feeding/i, 'rack'], [/kopiec|cairn/i, 'cairn'], [/studni|well/i, 'well']];
+  function pointKind(setId, sym) {
+    for (const [re, kind] of POINT_NAMES) if (re.test(sym.name || '')) return kind;
+    return POINTS[setId][(sym.num / 1000) | 0] || null;
+  }
+  // Obiekty punktowe mapy: [{ kind, x, y }] w milimetrach OCAD-a.
+  function points(map, setId) {
+    setId = setId || detectSet(map);
+    const out = [], kinds = new Map();
+    for (const o of map.objects) {
+      if (o.type !== 1 || !o.rings[0]) continue;
+      if (!kinds.has(o.sym)) { const sym = map.symbols.get(o.sym); kinds.set(o.sym, sym && !sym.hidden ? pointKind(setId, sym) : null); }
+      const kind = kinds.get(o.sym);
+      if (kind) out.push({ kind, x: o.rings[0][0], y: o.rings[0][1] });
+    }
+    return out;
+  }
+
   // Nazwy rodzajów do tabeli symboli (po polsku).
   const KIND_NAMES = {
     ignore: 'pomijany', contour: 'warstwica', open: 'teren otwarty', rough: 'otwarty nierówny / z drzewami', forest: 'las (biały)',
@@ -256,5 +286,5 @@
     oob: 'teren wyłączony (nadruk)', oobline: 'granica wyłączona (nadruk)',
   };
 
-  root.BnoSymbols = { SETS, KIND, KIND_NAMES, detectSet, kindOf, build };
+  root.BnoSymbols = { SETS, KIND, KIND_NAMES, detectSet, kindOf, build, points };
 })(typeof self !== 'undefined' ? self : this);
