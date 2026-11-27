@@ -221,6 +221,8 @@
   let objects = [];   // obiekty punktowe mapy (kamienie, górki, wykroty...) w pikselach obrazu: [{ kind, x, y }]
   let gridOcad = false; // siatka treningu pochodzi z pliku OCAD (rozróżnia drogi i ścieżki)
   let desc = { steps: [], marks: [] }, descFor = null; // opis wybranego wariantu słowami
+  let descOn = true;  // podpowiedzi słowne włączone (pamiętane w telefonie)
+  try { descOn = localStorage.getItem('bno-desc') !== '0'; } catch (err) { /* nieistotne */ }
   // Trasa treningu: punkty w kolejności biegu (piksele obrazu) i numer punktu, do którego teraz biegniesz.
   let course = null, courseAt = -1;
   let courses = [];        // trasy treningu: [{ name, points: [{ x, y, type, code }] }] w pikselach obrazu
@@ -757,7 +759,7 @@
     descFor = route;
     const box = $('ldesc');
     desc = { steps: [], marks: [] };
-    if (route && cal && proc) {
+    if (descOn && route && cal && proc) {
       try {
         const nv = headingVector(cal, 0), nl = Math.hypot(nv.x, nv.y) || 1;
         desc = BnoOpis.describe({ pts: route.pts, cls: proc.cls, w: proc.w, h: proc.h, k: proc.k, pxPerM: cal.pxPerM, north: { x: nv.x / nl, y: nv.y / nl },
@@ -1148,6 +1150,14 @@
   });
 
   // ---------- obracanie mapy zgodnie z kierunkiem patrzenia ----------
+  const showDesc = () => { $('ldescon').textContent = descOn ? 'Opis wariantu: wł.' : 'Opis wariantu: wył.'; $('ldescon').classList.toggle('on', descOn); };
+  showDesc();
+  $('ldescon').addEventListener('click', () => {
+    descOn = !descOn;
+    try { localStorage.setItem('bno-desc', descOn ? '1' : '0'); } catch (err) { /* jw. */ }
+    descFor = null; // policz (albo schowaj) opis od nowa
+    showDesc(); refresh();
+  });
   const showRot = () => { $('lrot').textContent = rotOn ? 'Obrót mapy: wł.' : 'Obrót mapy: wył.'; $('lrot').classList.toggle('on', rotOn); };
   showRot();
   $('lrot').addEventListener('click', () => {
